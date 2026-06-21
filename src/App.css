@@ -1,0 +1,351 @@
+:root {
+  --bg: #f7f7f8;
+  --panel: #ffffff;
+  --border: #e6e6ea;
+  --text: #1d1d1f;
+  --muted: #8a8a8f;
+  --accent: #2f6fed;
+  --accent-soft: #e8f0fe;
+  --danger: #d23b3b;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+}
+
+button {
+  font: inherit;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 5px 11px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+button:hover {
+  background: #f0f0f3;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.primary:hover {
+  filter: brightness(1.05);
+}
+button.ghost {
+  background: transparent;
+  color: var(--muted);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Boot / welcome ---- */
+.boot {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--muted);
+}
+.welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  gap: 14px;
+  padding: 24px;
+}
+.welcome h1 {
+  font-size: 42px;
+  margin: 0;
+}
+.welcome .tagline {
+  color: var(--muted);
+  margin: 0;
+  font-size: 16px;
+}
+.welcome .primary {
+  font-size: 16px;
+  padding: 10px 20px;
+  margin-top: 8px;
+}
+.welcome .hint {
+  color: var(--muted);
+  font-size: 13px;
+  max-width: 420px;
+  line-height: 1.5;
+}
+
+/* ---- App shell ---- */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  font-weight: 600;
+  font-size: 15px;
+  white-space: nowrap;
+}
+.search {
+  flex: 1;
+  max-width: 420px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  background: var(--bg);
+}
+.search:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: #fff;
+}
+.topbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  align-items: center;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.sidebar {
+  width: 290px;
+  min-width: 200px;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+/* ---- Tree ---- */
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13.5px;
+  border-radius: 6px;
+  margin: 0 6px;
+}
+.tree-row:hover {
+  background: #f0f0f3;
+}
+.tree-row.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.tree-row.unsupported {
+  color: var(--muted);
+}
+.tree-icon {
+  flex-shrink: 0;
+}
+.tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-empty,
+.search-head {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 12px 16px;
+}
+.search-head {
+  padding-bottom: 6px;
+  font-weight: 500;
+}
+
+/* ---- Empty state ---- */
+.empty {
+  margin: auto;
+  text-align: center;
+  color: var(--muted);
+}
+.empty-art {
+  font-size: 56px;
+  opacity: 0.55;
+}
+
+/* ---- Viewers ---- */
+.viewer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.viewer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.zoom-label {
+  font-size: 13px;
+  color: var(--muted);
+  min-width: 44px;
+  text-align: center;
+}
+.viewer-msg {
+  padding: 20px;
+  color: var(--muted);
+}
+.viewer-msg.error {
+  color: var(--danger);
+}
+.pdf-pages {
+  flex: 1;
+  overflow: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  background: #f0f0f2;
+}
+.pdf-page {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  background: #fff;
+  max-width: 100%;
+  height: auto;
+}
+.epub-host {
+  flex: 1;
+  overflow: hidden;
+  background: #fff;
+}
+
+/* ---- Context menu ---- */
+.context-menu {
+  position: fixed;
+  z-index: 50;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  padding: 5px;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+}
+.context-menu button {
+  border: none;
+  background: transparent;
+  text-align: left;
+  border-radius: 6px;
+  padding: 7px 10px;
+}
+.context-menu button:hover {
+  background: var(--accent-soft);
+}
+.context-menu button.danger {
+  color: var(--danger);
+}
+.menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+/* ---- Modal ---- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.28);
+  display: grid;
+  place-items: center;
+  z-index: 100;
+}
+.modal {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 20px;
+  width: 340px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+.modal h3 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+.modal input {
+  width: 100%;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+.modal input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e;
+    --panel: #252528;
+    --border: #38383c;
+    --text: #f2f2f5;
+    --muted: #9a9aa0;
+    --accent: #5b8dff;
+    --accent-soft: #2a3552;
+  }
+  button:hover {
+    background: #34343a;
+  }
+  .tree-row:hover {
+    background: #303036;
+  }
+  .pdf-pages {
+    background: #161618;
+  }
+  .epub-host {
+    background: #fff;
+  }
+}
