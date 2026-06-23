@@ -1,10 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// A single filesystem entry shown in the library tree.
 #[derive(Serialize)]
@@ -106,7 +105,7 @@ fn create_folder(parent: String, name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn rename_entry(path: String, new_name: String) -> Result<String, String> {
+fn rename_entry(app: tauri::AppHandle, path: String, new_name: String) -> Result<String, String> {
     let src = Path::new(&path);
     let parent = src.parent().ok_or("No parent directory")?;
     let safe = new_name.trim().replace(['/', '\\'], "-");
@@ -118,16 +117,24 @@ fn rename_entry(path: String, new_name: String) -> Result<String, String> {
         return Err(format!("\"{safe}\" already exists here"));
     }
     fs::rename(src, &dest).map_err(|e| e.to_string())?;
-    Ok(dest.to_string_lossy().to_string())
+    let dest_str = dest.to_string_lossy().to_string();
+    if let Some(lib) = read_config(&app).library_path {
+        move_meta(&lib, &path, &dest_str);
+    }
+    Ok(dest_str)
 }
 
 #[tauri::command]
-fn delete_entry(path: String) -> Result<(), String> {
-    trash::delete(&path).map_err(|e| e.to_string())
+fn delete_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    trash::delete(&path).map_err(|e| e.to_string())?;
+    if let Some(lib) = read_config(&app).library_path {
+        remove_meta(&lib, &path);
+    }
+    Ok(())
 }
 
 #[tauri::command]
-fn move_entry(path: String, dest_dir: String) -> Result<String, String> {
+fn move_entry(app: tauri::AppHandle, path: String, dest_dir: String) -> Result<String, String> {
     let src = Path::new(&path);
     let name = src.file_name().ok_or("Invalid source")?;
     let dest = Path::new(&dest_dir).join(name);
@@ -138,7 +145,11 @@ fn move_entry(path: String, dest_dir: String) -> Result<String, String> {
         return Err("An item with that name already exists in the destination".into());
     }
     fs::rename(src, &dest).map_err(|e| e.to_string())?;
-    Ok(dest.to_string_lossy().to_string())
+    let dest_str = dest.to_string_lossy().to_string();
+    if let Some(lib) = read_config(&app).library_path {
+        move_meta(&lib, &path, &dest_str);
+    }
+    Ok(dest_str)
 }
 
 /// Copy chosen files into a target directory, resolving name collisions.
@@ -222,207 +233,284 @@ fn walk(dir: &Path, needle: &str, out: &mut Vec<Entry>) {
     }
 }
 
-// ===========================================================================
-// People — author/researcher profiles, stored as plain folders in the library
-// (`<library>/People/<name>/person.json` + downloaded avatar/thumbnails/PDFs).
-// ===========================================================================
-
-/// One resource attached to a person: a PDF, a website snapshot, or a video.
-#[derive(Serialize, Deserialize, Clone)]
-struct Source {
-    id: String,
-    kind: String, // "pdf" | "webpage" | "youtube"
-    #[serde(default)]
-    url: Option<String>,
-    title: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    site: Option<String>,
-    #[serde(default)]
-    thumb: Option<String>, // path relative to the person dir
-    #[serde(default)]
-    file: Option<String>, // PDF filename relative to the person dir
-}
-
-/// What we persist to `person.json`.
-#[derive(Serialize, Deserialize, Clone, Default)]
-struct PersonData {
-    name: String,
-    #[serde(default)]
-    summary: String,
-    #[serde(default)]
-    photo: Option<String>, // avatar filename relative to the person dir
-    #[serde(default)]
-    sources: Vec<Source>,
-}
-
-/// What we hand to the frontend — `PersonData` plus the absolute folder path.
-#[derive(Serialize)]
-struct Person {
-    dir: String,
-    name: String,
-    summary: String,
-    photo: Option<String>,
-    sources: Vec<Source>,
-}
-
-impl Person {
-    fn build(dir: &Path, d: PersonData) -> Self {
-        Person {
-            dir: dir.to_string_lossy().to_string(),
-            name: d.name,
-            summary: d.summary,
-            photo: d.photo,
-            sources: d.sources,
-        }
-    }
-}
-
-fn now_id() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("{nanos}")
-}
-
 fn sanitize(name: &str) -> String {
     name.trim().replace(['/', '\\', ':'], "-")
 }
 
-fn people_root(library: &str) -> PathBuf {
-    Path::new(library).join("People")
+// ===========================================================================
+// Item tags & notes — stored centrally in `<library>/.charly/meta.json`,
+// keyed by each item's path relative to the library root (folder-portable).
+// ===========================================================================
+
+/// A display title (alias), tags, and a free-form note attached to one library
+/// item (file or folder). The real filename on disk is never changed by these.
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct ItemMeta {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    note: String,
 }
 
-fn read_person_data(dir: &Path) -> Result<PersonData, String> {
-    let s = fs::read_to_string(dir.join("person.json")).map_err(|e| e.to_string())?;
-    serde_json::from_str(&s).map_err(|e| e.to_string())
+type MetaIndex = std::collections::HashMap<String, ItemMeta>;
+
+fn meta_path(library: &str) -> PathBuf {
+    Path::new(library).join(".charly").join("meta.json")
 }
 
-fn write_person_data(dir: &Path, d: &PersonData) -> Result<(), String> {
-    let s = serde_json::to_string_pretty(d).map_err(|e| e.to_string())?;
-    fs::write(dir.join("person.json"), s).map_err(|e| e.to_string())
+fn read_meta_index(library: &str) -> MetaIndex {
+    fs::read_to_string(meta_path(library))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
-#[tauri::command]
-fn list_people(library: String) -> Result<Vec<Person>, String> {
-    let root = people_root(&library);
-    if !root.exists() {
-        return Ok(vec![]);
+fn write_meta_index(library: &str, idx: &MetaIndex) -> Result<(), String> {
+    let mp = meta_path(library);
+    if let Some(parent) = mp.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let mut people: Vec<Person> = fs::read_dir(&root)
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .map(|d| d.path())
-        .filter(|p| p.is_dir())
-        .filter_map(|p| read_person_data(&p).ok().map(|d| Person::build(&p, d)))
-        .collect();
-    people.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    Ok(people)
+    let json = serde_json::to_string_pretty(idx).map_err(|e| e.to_string())?;
+    fs::write(mp, json).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn create_person(library: String, name: String) -> Result<Person, String> {
-    let safe = sanitize(&name);
-    if safe.is_empty() {
-        return Err("Name cannot be empty".into());
+/// An item's path relative to the library root — the stable key we store under.
+fn rel_key(library: &str, path: &str) -> Option<String> {
+    Path::new(path)
+        .strip_prefix(library)
+        .ok()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .filter(|k| !k.is_empty())
+}
+
+/// Drop an index entry that carries no title, tags, or note.
+fn prune(idx: &mut MetaIndex, key: &str) {
+    if let Some(m) = idx.get(key) {
+        if m.title.trim().is_empty() && m.tags.is_empty() && m.note.trim().is_empty() {
+            idx.remove(key);
+        }
     }
-    let root = people_root(&library);
-    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    let mut dir = root.join(&safe);
-    let mut n = 2;
-    while dir.exists() {
-        dir = root.join(format!("{safe} ({n})"));
-        n += 1;
-    }
-    fs::create_dir(&dir).map_err(|e| e.to_string())?;
-    let data = PersonData {
-        name: name.trim().to_string(),
-        ..Default::default()
+}
+
+/// Re-key metadata when an item (and any descendants) is renamed or moved.
+fn move_meta(library: &str, old_path: &str, new_path: &str) {
+    let (Some(old_key), Some(new_key)) = (rel_key(library, old_path), rel_key(library, new_path))
+    else {
+        return;
     };
-    write_person_data(&dir, &data)?;
-    Ok(Person::build(&dir, data))
-}
-
-#[tauri::command]
-fn update_person(dir: String, name: String, summary: String) -> Result<Person, String> {
-    let p = Path::new(&dir);
-    let mut data = read_person_data(p)?;
-    data.name = name.trim().to_string();
-    data.summary = summary;
-    write_person_data(p, &data)?;
-    Ok(Person::build(p, data))
-}
-
-#[tauri::command]
-fn delete_person(dir: String) -> Result<(), String> {
-    trash::delete(&dir).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn remove_source(dir: String, id: String) -> Result<Person, String> {
-    let p = Path::new(&dir);
-    let mut data = read_person_data(p)?;
-    if let Some(src) = data.sources.iter().find(|s| s.id == id) {
-        if let Some(f) = &src.file {
-            let _ = trash::delete(p.join(f));
-        }
-        if let Some(t) = &src.thumb {
-            let _ = fs::remove_file(p.join(t));
+    let mut idx = read_meta_index(library);
+    if idx.is_empty() {
+        return;
+    }
+    let prefix = format!("{old_key}/");
+    let mut next = MetaIndex::new();
+    let mut changed = false;
+    for (k, v) in idx.drain() {
+        if k == old_key {
+            next.insert(new_key.clone(), v);
+            changed = true;
+        } else if let Some(rest) = k.strip_prefix(&prefix) {
+            next.insert(format!("{new_key}/{rest}"), v);
+            changed = true;
+        } else {
+            next.insert(k, v);
         }
     }
-    data.sources.retain(|s| s.id != id);
-    write_person_data(p, &data)?;
-    Ok(Person::build(p, data))
+    if changed {
+        let _ = write_meta_index(library, &next);
+    }
 }
 
-/// Copy local PDF files into a person's folder as attached sources.
+/// Drop metadata for a deleted item (and any descendants).
+fn remove_meta(library: &str, path: &str) {
+    let Some(key) = rel_key(library, path) else {
+        return;
+    };
+    let prefix = format!("{key}/");
+    let mut idx = read_meta_index(library);
+    let before = idx.len();
+    idx.retain(|k, _| k != &key && !k.starts_with(&prefix));
+    if idx.len() != before {
+        let _ = write_meta_index(library, &idx);
+    }
+}
+
 #[tauri::command]
-fn import_person_pdfs(dir: String, sources: Vec<String>) -> Result<Person, String> {
-    let p = Path::new(&dir);
-    let mut data = read_person_data(p)?;
-    for (i, src) in sources.iter().enumerate() {
-        let s = Path::new(src);
-        let Some(file_name) = s.file_name() else {
+fn get_item_meta(library: String, path: String) -> ItemMeta {
+    match rel_key(&library, &path) {
+        Some(key) => read_meta_index(&library).get(&key).cloned().unwrap_or_default(),
+        None => ItemMeta::default(),
+    }
+}
+
+#[tauri::command]
+fn set_item_tags(library: String, path: String, tags: Vec<String>) -> Result<(), String> {
+    let key = rel_key(&library, &path).ok_or("Item is outside the library")?;
+    let mut idx = read_meta_index(&library);
+    let mut seen = std::collections::HashSet::new();
+    let clean: Vec<String> = tags
+        .into_iter()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty() && seen.insert(t.to_lowercase()))
+        .collect();
+    idx.entry(key.clone()).or_default().tags = clean;
+    prune(&mut idx, &key);
+    write_meta_index(&library, &idx)
+}
+
+#[tauri::command]
+fn set_item_note(library: String, path: String, note: String) -> Result<(), String> {
+    let key = rel_key(&library, &path).ok_or("Item is outside the library")?;
+    let mut idx = read_meta_index(&library);
+    idx.entry(key.clone()).or_default().note = note;
+    prune(&mut idx, &key);
+    write_meta_index(&library, &idx)
+}
+
+#[tauri::command]
+fn set_item_title(library: String, path: String, title: String) -> Result<(), String> {
+    let key = rel_key(&library, &path).ok_or("Item is outside the library")?;
+    let mut idx = read_meta_index(&library);
+    idx.entry(key.clone()).or_default().title = title.trim().to_string();
+    prune(&mut idx, &key);
+    write_meta_index(&library, &idx)
+}
+
+/// Filesystem facts for an item: modified time (ms since epoch) and byte size.
+#[derive(Serialize)]
+struct FileInfo {
+    modified_ms: u64,
+    size: u64,
+}
+
+#[tauri::command]
+fn file_info(path: String) -> Result<FileInfo, String> {
+    let md = fs::metadata(&path).map_err(|e| e.to_string())?;
+    let modified_ms = md
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Ok(FileInfo {
+        modified_ms,
+        size: md.len(),
+    })
+}
+
+#[derive(Serialize)]
+struct TagCount {
+    tag: String,
+    count: usize,
+}
+
+#[tauri::command]
+fn list_all_tags(library: String) -> Vec<TagCount> {
+    let idx = read_meta_index(&library);
+    let lib = Path::new(&library);
+    let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+    for (key, m) in &idx {
+        if !lib.join(key).exists() {
             continue;
-        };
-        let mut dest = p.join(file_name);
-        if dest.exists() {
-            let stem = s.file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
-            let ext = s.extension().map(|x| format!(".{}", x.to_string_lossy())).unwrap_or_default();
-            let mut n = 2;
-            loop {
-                let cand = p.join(format!("{stem} ({n}){ext}"));
-                if !cand.exists() {
-                    dest = cand;
-                    break;
-                }
-                n += 1;
-            }
         }
-        fs::copy(s, &dest).map_err(|e| e.to_string())?;
-        let fname = dest.file_name().unwrap().to_string_lossy().to_string();
-        let title = dest
-            .file_stem()
-            .map(|x| x.to_string_lossy().to_string())
-            .unwrap_or_else(|| fname.clone());
-        data.sources.insert(
-            0,
-            Source {
-                id: format!("{}-{i}", now_id()),
-                kind: "pdf".into(),
-                url: None,
-                title,
-                description: None,
-                site: None,
-                thumb: None,
-                file: Some(fname),
-            },
-        );
+        for t in &m.tags {
+            *counts.entry(t.clone()).or_insert(0) += 1;
+        }
     }
-    write_person_data(p, &data)?;
-    Ok(Person::build(p, data))
+    let mut out: Vec<TagCount> =
+        counts.into_iter().map(|(tag, count)| TagCount { tag, count }).collect();
+    out.sort_by(|a, b| {
+        b.count.cmp(&a.count).then(a.tag.to_lowercase().cmp(&b.tag.to_lowercase()))
+    });
+    out
+}
+
+#[tauri::command]
+fn find_by_tag(library: String, tag: String) -> Vec<Entry> {
+    let idx = read_meta_index(&library);
+    let lib = Path::new(&library);
+    let mut out: Vec<Entry> = idx
+        .iter()
+        .filter(|(_, m)| m.tags.iter().any(|t| t.eq_ignore_ascii_case(&tag)))
+        .filter_map(|(key, _)| {
+            let abs = lib.join(key);
+            if abs.exists() {
+                entry_from_path(&abs)
+            } else {
+                None
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    out
+}
+
+// ---- PDF highlights (one sidecar JSON per document under .charly) ----------
+
+/// A highlight rectangle in page-normalized coordinates (0..1), so it survives
+/// zoom changes and re-rendering.
+#[derive(Serialize, Deserialize, Clone)]
+struct HlRect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct Highlight {
+    id: String,
+    page: usize,
+    color: String,
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    note: String,
+    rects: Vec<HlRect>,
+}
+
+fn highlights_path(library: &str, path: &str) -> Option<PathBuf> {
+    let key = rel_key(library, path)?;
+    let safe = key.replace(['/', '\\'], "__");
+    Some(
+        Path::new(library)
+            .join(".charly")
+            .join("highlights")
+            .join(format!("{safe}.json")),
+    )
+}
+
+#[tauri::command]
+fn get_highlights(library: String, path: String) -> Vec<Highlight> {
+    let Some(hp) = highlights_path(&library, &path) else {
+        return vec![];
+    };
+    fs::read_to_string(hp)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn save_highlights(
+    library: String,
+    path: String,
+    highlights: Vec<Highlight>,
+) -> Result<(), String> {
+    let hp = highlights_path(&library, &path).ok_or("Item is outside the library")?;
+    if highlights.is_empty() {
+        let _ = fs::remove_file(&hp);
+        return Ok(());
+    }
+    if let Some(parent) = hp.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(&highlights).map_err(|e| e.to_string())?;
+    fs::write(hp, json).map_err(|e| e.to_string())
 }
 
 // ---- Web fetching / link metadata -----------------------------------------
@@ -565,52 +653,6 @@ async fn fetch_meta(url: &str) -> Result<LinkMeta, String> {
     }
 }
 
-/// Frontend-callable preview (no side effects) — used to confirm before saving.
-#[tauri::command]
-async fn preview_link(url: String) -> Result<LinkMeta, String> {
-    fetch_meta(&url).await
-}
-
-fn ext_for(ctype: &str, url: &str) -> &'static str {
-    let c = ctype.to_lowercase();
-    let u = url.to_lowercase();
-    if c.contains("png") || u.contains(".png") {
-        "png"
-    } else if c.contains("webp") || u.contains(".webp") {
-        "webp"
-    } else if c.contains("gif") || u.contains(".gif") {
-        "gif"
-    } else if c.contains("svg") || u.contains(".svg") {
-        "svg"
-    } else {
-        "jpg"
-    }
-}
-
-/// Download a remote image into the person dir; returns the relative filename.
-async fn download_image(dir: &Path, base_name: &str, image_url: &str) -> Result<String, String> {
-    let c = http_client()?;
-    let resp = c.get(image_url).send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("image fetch failed: {}", resp.status()));
-    }
-    let ctype = resp
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let ext = ext_for(&ctype, image_url);
-    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
-    let fname = format!("{base_name}.{ext}");
-    let full = dir.join(&fname);
-    if let Some(parent) = full.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    fs::write(&full, &bytes).map_err(|e| e.to_string())?;
-    Ok(fname)
-}
-
 async fn download_pdf(dir: &Path, url: &str, title: &str) -> Result<String, String> {
     let c = http_client()?;
     let resp = c.get(url).send().await.map_err(|e| e.to_string())?;
@@ -634,61 +676,6 @@ async fn download_pdf(dir: &Path, url: &str, title: &str) -> Result<String, Stri
     }
     fs::write(&dest, &bytes).map_err(|e| e.to_string())?;
     Ok(dest.file_name().unwrap().to_string_lossy().to_string())
-}
-
-/// Set a person's avatar by fetching an image from a link's metadata.
-#[tauri::command]
-async fn set_photo_from_link(dir: String, link: String) -> Result<Person, String> {
-    let meta = fetch_meta(&link).await?;
-    let image = meta.image.ok_or("Couldn’t find an image at that link")?;
-    let p = Path::new(&dir).to_path_buf();
-    let fname = download_image(&p, "avatar", &image).await?;
-    let mut data = read_person_data(&p)?;
-    data.photo = Some(fname);
-    write_person_data(&p, &data)?;
-    Ok(Person::build(&p, data))
-}
-
-/// Add a resource link to a person: downloads PDFs, snapshots webpages, or
-/// captures YouTube metadata, then stores it in `person.json`.
-#[tauri::command]
-async fn add_source(dir: String, link: String) -> Result<Person, String> {
-    let p = Path::new(&dir).to_path_buf();
-    let meta = fetch_meta(&link).await?;
-    let id = now_id();
-    let source = if meta.is_pdf {
-        let fname = download_pdf(&p, &link, &meta.title).await?;
-        let title = fname.trim_end_matches(".pdf").to_string();
-        Source {
-            id,
-            kind: "pdf".into(),
-            url: Some(link.clone()),
-            title,
-            description: None,
-            site: meta.site,
-            thumb: None,
-            file: Some(fname),
-        }
-    } else {
-        let thumb = match &meta.image {
-            Some(img) => download_image(&p, &format!(".thumbs/{id}"), img).await.ok(),
-            None => None,
-        };
-        Source {
-            id,
-            kind: meta.kind,
-            url: Some(link.clone()),
-            title: meta.title,
-            description: meta.description,
-            site: meta.site,
-            thumb,
-            file: None,
-        }
-    };
-    let mut data = read_person_data(&p)?;
-    data.sources.insert(0, source);
-    write_person_data(&p, &data)?;
-    Ok(Person::build(&p, data))
 }
 
 // ===========================================================================
@@ -896,10 +883,15 @@ fn start_clip_server(app: tauri::AppHandle) {
                                 Ok(req) => match rt
                                     .block_on(clip_to_folder(&lib, &req.folder, &req.url, &req.title))
                                 {
-                                    Ok(r) => json_response(
-                                        200,
-                                        serde_json::to_string(&r).unwrap_or_default(),
-                                    ),
+                                    Ok(r) => {
+                                        // Tell the open Charly window to re-scan disk so the
+                                        // freshly clipped item appears without a manual refresh.
+                                        let _ = app.emit("clip-added", &r);
+                                        json_response(
+                                            200,
+                                            serde_json::to_string(&r).unwrap_or_default(),
+                                        )
+                                    }
                                     Err(e) => err_json(502, &e),
                                 },
                             },
@@ -933,15 +925,15 @@ pub fn run() {
             import_files,
             read_file,
             search,
-            list_people,
-            create_person,
-            update_person,
-            delete_person,
-            remove_source,
-            import_person_pdfs,
-            preview_link,
-            set_photo_from_link,
-            add_source,
+            get_item_meta,
+            set_item_tags,
+            set_item_note,
+            set_item_title,
+            file_info,
+            list_all_tags,
+            find_by_tag,
+            get_highlights,
+            save_highlights,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -7,6 +7,7 @@ interface NodeProps {
   version: number;
   selectedPath: string | null;
   onSelect: (entry: Entry) => void;
+  onActivate: (entry: Entry) => void;
   onContext: (entry: Entry, x: number, y: number) => void;
 }
 
@@ -16,7 +17,7 @@ function fileIcon(ext: string): string {
   return "📄";
 }
 
-function TreeNode({ entry, depth, version, selectedPath, onSelect, onContext }: NodeProps) {
+function TreeNode({ entry, depth, version, selectedPath, onSelect, onActivate, onContext }: NodeProps) {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<Entry[] | null>(null);
 
@@ -45,11 +46,14 @@ function TreeNode({ entry, depth, version, selectedPath, onSelect, onContext }: 
         }`}
         style={indent}
         onClick={handleClick}
+        onDoubleClick={() => {
+          if (!entry.is_dir) onActivate(entry);
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           onContext(entry, e.clientX, e.clientY);
         }}
-        title={entry.name}
+        title={!entry.is_dir && entry.ext === "charlylink" ? "Double-click to open in browser" : entry.name}
       >
         <span className="tree-icon">
           {entry.is_dir ? (expanded ? "📂" : "📁") : fileIcon(entry.ext)}
@@ -64,6 +68,7 @@ function TreeNode({ entry, depth, version, selectedPath, onSelect, onContext }: 
           version={version}
           selectedPath={selectedPath}
           onSelect={onSelect}
+          onActivate={onActivate}
           onContext={onContext}
         />
       ))}
@@ -76,17 +81,15 @@ interface TreeProps {
   version: number;
   selectedPath: string | null;
   onSelect: (entry: Entry) => void;
+  onActivate: (entry: Entry) => void;
   onContext: (entry: Entry, x: number, y: number) => void;
 }
 
-export default function Tree({ root, version, selectedPath, onSelect, onContext }: TreeProps) {
+export default function Tree({ root, version, selectedPath, onSelect, onActivate, onContext }: TreeProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
 
   useEffect(() => {
-    listDir(root)
-      // The People profiles folder is surfaced in its own tab, not the file tree.
-      .then((es) => setEntries(es.filter((e) => !(e.is_dir && e.name === "People"))))
-      .catch(() => setEntries([]));
+    listDir(root).then(setEntries).catch(() => setEntries([]));
   }, [root, version]);
 
   if (entries.length === 0) {
@@ -103,6 +106,7 @@ export default function Tree({ root, version, selectedPath, onSelect, onContext 
           version={version}
           selectedPath={selectedPath}
           onSelect={onSelect}
+          onActivate={onActivate}
           onContext={onContext}
         />
       ))}

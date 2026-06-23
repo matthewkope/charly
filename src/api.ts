@@ -53,56 +53,112 @@ export async function pickDocuments(): Promise<string[]> {
   return Array.isArray(result) ? result : [result];
 }
 
-/** Native multi-file picker for PDFs only (person papers). */
-export async function pickPdfs(): Promise<string[]> {
-  const result = await open({
-    multiple: true,
-    filters: [{ name: "PDF", extensions: ["pdf"] }],
-  });
-  if (!result) return [];
-  return Array.isArray(result) ? result : [result];
-}
+// ---- Tags & notes --------------------------------------------------------
 
-// ---- People --------------------------------------------------------------
-
-export interface Source {
-  id: string;
-  kind: "pdf" | "webpage" | "youtube";
-  url: string | null;
+export interface ItemMeta {
   title: string;
-  description: string | null;
-  site: string | null;
-  thumb: string | null; // relative to person dir
-  file: string | null; // relative pdf filename
+  tags: string[];
+  note: string;
 }
 
-export interface Person {
-  dir: string;
-  name: string;
-  summary: string;
-  photo: string | null; // relative avatar filename
-  sources: Source[];
+export interface TagCount {
+  tag: string;
+  count: number;
 }
 
-export const listPeople = (library: string) => invoke<Person[]>("list_people", { library });
-export const createPerson = (library: string, name: string) =>
-  invoke<Person>("create_person", { library, name });
-export const updatePerson = (dir: string, name: string, summary: string) =>
-  invoke<Person>("update_person", { dir, name, summary });
-export const deletePerson = (dir: string) => invoke<void>("delete_person", { dir });
-export const removeSource = (dir: string, id: string) =>
-  invoke<Person>("remove_source", { dir, id });
-export const importPersonPdfs = (dir: string, sources: string[]) =>
-  invoke<Person>("import_person_pdfs", { dir, sources });
-export const setPhotoFromLink = (dir: string, link: string) =>
-  invoke<Person>("set_photo_from_link", { dir, link });
-export const addSource = (dir: string, link: string) =>
-  invoke<Person>("add_source", { dir, link });
-
-/** Join a person's folder with a relative file path. */
-export function joinPath(dir: string, rel: string): string {
-  return `${dir}/${rel}`;
+export interface FileInfo {
+  modified_ms: number;
+  size: number;
 }
+
+export const getItemMeta = (library: string, path: string) =>
+  invoke<ItemMeta>("get_item_meta", { library, path });
+export const setItemTags = (library: string, path: string, tags: string[]) =>
+  invoke<void>("set_item_tags", { library, path, tags });
+export const setItemNote = (library: string, path: string, note: string) =>
+  invoke<void>("set_item_note", { library, path, note });
+export const setItemTitle = (library: string, path: string, title: string) =>
+  invoke<void>("set_item_title", { library, path, title });
+export const fileInfo = (path: string) => invoke<FileInfo>("file_info", { path });
+export const listAllTags = (library: string) =>
+  invoke<TagCount[]>("list_all_tags", { library });
+export const findByTag = (library: string, tag: string) =>
+  invoke<Entry[]>("find_by_tag", { library, tag });
 
 /** Open an external URL in the user's default browser. */
 export const openExternal = (url: string) => openUrl(url);
+
+/** Local clip server port (mirrors CLIP_PORT in src-tauri/src/lib.rs). */
+const CLIP_PORT = 8765;
+
+/**
+ * Clip a dropped/added URL into the library through the local clip server —
+ * the same endpoint the browser extension posts to. The backend fetches the
+ * page metadata, saves a `.charlylink` (or downloads a PDF), and emits a
+ * `clip-added` event so the open window refreshes itself.
+ *
+ * @param folder Library-relative folder; "" = library root, omit for "Inbox".
+ */
+export async function clipLink(url: string, folder = ""): Promise<void> {
+  const res = await fetch(`http://127.0.0.1:${CLIP_PORT}/clip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, folder }),
+  });
+  if (!res.ok) {
+    let msg = `Couldn’t save link (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error) msg = data.error;
+    } catch {
+      /* keep the default message */
+    }
+    throw new Error(msg);
+  }
+}
+
+/** Metadata stored in a `.charlylink` sidecar by the browser extension. */
+export interface CharlyLink {
+  url?: string;
+  title?: string;
+  site?: string;
+  description?: string;
+  kind?: string; // "webpage" | "youtube"
+  image?: string; // remote cover/thumbnail URL
+}
+
+/** Read and parse a `.charlylink` sidecar file. */
+export async function readCharlyLink(path: string): Promise<CharlyLink> {
+  const bytes = await readFileBytes(path);
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+/** Read a `.charlylink` sidecar (saved by the browser extension) and open its URL. */
+export async function openCharlyLink(path: string): Promise<void> {
+  const data = await readCharlyLink(path);
+  if (data?.url) await openUrl(data.url);
+}
+
+// ---- PDF highlights ------------------------------------------------------
+
+/** A highlight rectangle in page-normalized coords (0..1). */
+export interface HlRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface Highlight {
+  id: string;
+  page: number; // 1-based page number
+  color: string;
+  text: string;
+  note: string; // Kindle-style annotation attached to the highlight
+  rects: HlRect[];
+}
+
+export const getHighlights = (library: string, path: string) =>
+  invoke<Highlight[]>("get_highlights", { library, path });
+export const saveHighlights = (library: string, path: string, highlights: Highlight[]) =>
+  invoke<void>("save_highlights", { library, path, highlights });
