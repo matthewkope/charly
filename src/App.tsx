@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   createFolder,
+  createPerson,
   deleteEntry,
   Entry,
   getLibrary,
   importFiles,
   isSupported,
+  joinPath,
+  listPeople,
+  Person,
   pickDocuments,
   pickFolder,
   renameEntry,
@@ -16,7 +20,12 @@ import {
 import Tree from "./components/Tree";
 import PdfViewer from "./components/PdfViewer";
 import EpubViewer from "./components/EpubViewer";
+import PersonView from "./components/PersonView";
+import LocalImage from "./components/LocalImage";
+import PromptModal, { PromptState } from "./components/PromptModal";
 import "./App.css";
+
+type Mode = "library" | "people";
 
 interface MenuState {
   entry: Entry;
@@ -24,34 +33,51 @@ interface MenuState {
   y: number;
 }
 
-interface PromptState {
-  title: string;
-  initial: string;
-  confirmLabel: string;
-  onConfirm: (value: string) => void;
-}
-
 function baseName(path: string): string {
   return path.split("/").filter(Boolean).pop() ?? path;
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("");
 }
 
 export default function App() {
   const [library, setLib] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [mode, setMode] = useState<Mode>("library");
   const [version, setVersion] = useState(0);
   const [selected, setSelected] = useState<Entry | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Entry[] | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
+  const [people, setPeople] = useState<Person[]>([]);
+  const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
 
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
 
+  const reloadPeople = useCallback(
+    async (lib: string) => {
+      const list = await listPeople(lib);
+      setPeople(list);
+      return list;
+    },
+    [],
+  );
+
   useEffect(() => {
     getLibrary()
-      .then((p) => setLib(p))
+      .then((p) => {
+        setLib(p);
+        if (p) reloadPeople(p);
+      })
       .finally(() => setReady(true));
-  }, []);
+  }, [reloadPeople]);
 
   useEffect(() => {
     const close = () => setMenu(null);
@@ -59,7 +85,7 @@ export default function App() {
     return () => window.removeEventListener("click", close);
   }, []);
 
-  // Debounced search across the whole library.
+  // Debounced filename search (library mode).
   useEffect(() => {
     if (!library) return;
     const q = query.trim();
@@ -79,12 +105,13 @@ export default function App() {
     await setLibrary(path);
     setLib(path);
     setSelected(null);
+    setSelectedPerson(null);
+    reloadPeople(path);
     refresh();
   };
 
   const openEntry = (entry: Entry) => {
-    if (entry.is_dir) return;
-    if (!isSupported(entry.ext)) return;
+    if (entry.is_dir || !isSupported(entry.ext)) return;
     setSelected(entry);
   };
 
@@ -120,9 +147,7 @@ export default function App() {
       onConfirm: async (name) => {
         try {
           const newPath = await renameEntry(entry.path, name);
-          if (selected?.path === entry.path) {
-            setSelected({ ...selected, path: newPath, name });
-          }
+          if (selected?.path === entry.path) setSelected({ ...selected, path: newPath, name });
           refresh();
         } catch (e) {
           await confirm(String(e), { title: "Couldn’t rename", kind: "error" });
@@ -142,9 +167,38 @@ export default function App() {
     refresh();
   };
 
+  const askAddPerson = () => {
+    if (!library) return;
+    setPrompt({
+      title: "Add a person",
+      initial: "",
+      placeholder: "Name",
+      confirmLabel: "Add",
+      onConfirm: async (name) => {
+        if (!name.trim()) return;
+        try {
+          const person = await createPerson(library, name);
+          await reloadPeople(library);
+          setSelectedPerson(person);
+        } catch (e) {
+          await confirm(String(e), { title: "Couldn’t add person", kind: "error" });
+        }
+      },
+    });
+  };
+
+  const onPersonChanged = (updated: Person) => {
+    setSelectedPerson(updated);
+    setPeople((ps) => ps.map((p) => (p.dir === updated.dir ? updated : p)));
+  };
+
+  const onPersonDeleted = async () => {
+    setSelectedPerson(null);
+    if (library) await reloadPeople(library);
+  };
+
   if (!ready) return <div className="boot">Loading…</div>;
 
-  // ---- First-run / library setup ----
   if (!library) {
     return (
       <div className="welcome">
@@ -165,15 +219,39 @@ export default function App() {
     <div className="app" onContextMenu={(e) => e.preventDefault()}>
       <header className="topbar">
         <div className="brand">📚 Charly</div>
-        <input
-          className="search"
-          placeholder="Search your library…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        <div className="segmented">
+          <button
+            className={mode === "library" ? "seg active" : "seg"}
+            onClick={() => setMode("library")}
+          >
+            Library
+          </button>
+          <button
+            className={mode === "people" ? "seg active" : "seg"}
+            onClick={() => setMode("people")}
+          >
+            People
+          </button>
+        </div>
+        {mode === "library" && (
+          <input
+            className="search"
+            placeholder="Search your library…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        )}
         <div className="topbar-actions">
-          <button onClick={() => doImport(library)}>Import</button>
-          <button onClick={() => askNewFolder(library)}>New Folder</button>
+          {mode === "library" ? (
+            <>
+              <button onClick={() => doImport(library)}>Import</button>
+              <button onClick={() => askNewFolder(library)}>New Folder</button>
+            </>
+          ) : (
+            <button className="primary" onClick={askAddPerson}>
+              + Add person
+            </button>
+          )}
           <button className="ghost" onClick={chooseLibrary} title={library}>
             {baseName(library)} ▾
           </button>
@@ -182,7 +260,26 @@ export default function App() {
 
       <div className="body">
         <aside className="sidebar">
-          {results !== null ? (
+          {mode === "people" ? (
+            people.length === 0 ? (
+              <div className="tree-empty">No people yet. Click “Add person”.</div>
+            ) : (
+              people.map((p) => (
+                <div
+                  key={p.dir}
+                  className={`person-row${selectedPerson?.dir === p.dir ? " selected" : ""}`}
+                  onClick={() => setSelectedPerson(p)}
+                >
+                  {p.photo ? (
+                    <LocalImage path={joinPath(p.dir, p.photo)} className="person-row-avatar" />
+                  ) : (
+                    <div className="person-row-avatar person-row-initials">{initials(p.name)}</div>
+                  )}
+                  <span className="tree-label">{p.name}</span>
+                </div>
+              ))
+            )
+          ) : results !== null ? (
             <div className="search-results">
               <div className="search-head">
                 {results.length} result{results.length === 1 ? "" : "s"}
@@ -194,10 +291,6 @@ export default function App() {
                     isSupported(r.ext) ? "" : " unsupported"
                   }`}
                   onClick={() => openEntry(r)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setMenu({ entry: r, x: e.clientX, y: e.clientY });
-                  }}
                 >
                   <span className="tree-icon">{r.ext === "epub" ? "📗" : "📕"}</span>
                   <span className="tree-label">{r.name}</span>
@@ -216,7 +309,21 @@ export default function App() {
         </aside>
 
         <main className="content">
-          {selected ? (
+          {mode === "people" ? (
+            selectedPerson ? (
+              <PersonView
+                key={selectedPerson.dir}
+                person={selectedPerson}
+                onChange={onPersonChanged}
+                onDelete={onPersonDeleted}
+              />
+            ) : (
+              <div className="empty">
+                <div className="empty-art">👤</div>
+                <p>Select a person, or add one to get started.</p>
+              </div>
+            )
+          ) : selected ? (
             selected.ext === "pdf" ? (
               <PdfViewer key={selected.path} path={selected.path} />
             ) : (
@@ -273,46 +380,6 @@ function ContextMenu({
       <button className="danger" onClick={() => onDelete(entry)}>
         Move to Trash
       </button>
-    </div>
-  );
-}
-
-function PromptModal({ state, onClose }: { state: PromptState; onClose: () => void }) {
-  const [value, setValue] = useState(state.initial);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
-  }, []);
-
-  const submit = () => {
-    state.onConfirm(value);
-    onClose();
-  };
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{state.title}</h3>
-        <input
-          ref={inputRef}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-            if (e.key === "Escape") onClose();
-          }}
-        />
-        <div className="modal-actions">
-          <button className="ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="primary" onClick={submit}>
-            {state.confirmLabel}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

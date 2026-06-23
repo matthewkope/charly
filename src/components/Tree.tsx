@@ -83,7 +83,10 @@ export default function Tree({ root, version, selectedPath, onSelect, onContext 
   const [entries, setEntries] = useState<Entry[]>([]);
 
   useEffect(() => {
-    listDir(root).then(setEntries).catch(() => setEntries([]));
+    listDir(root)
+      // The People profiles folder is surfaced in its own tab, not the file tree.
+      .then((es) => setEntries(es.filter((e) => !(e.is_dir && e.name === "People"))))
+      .catch(() => setEntries([]));
   }, [root, version]);
 
   if (entries.length === 0) {

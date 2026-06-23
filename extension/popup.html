@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="head">
+      <span class="logo">📚</span>
+      <span class="brand">Clip to Charly</span>
+    </header>
+
+    <section class="page">
+      <div class="page-title" id="page-title">…</div>
+      <div class="page-url" id="page-url"></div>
+    </section>
+
+    <label class="field">
+      <span class="field-label">Save to folder</span>
+      <select id="folder" disabled>
+        <option>Connecting…</option>
+      </select>
+    </label>
+
+    <button id="clip" class="primary" disabled>Clip this page</button>
+
+    <div id="status" class="status" hidden></div>
+
+    <footer class="foot" id="foot"></footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

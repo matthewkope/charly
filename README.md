@@ -36,6 +36,16 @@ The library root is stored in the app config dir (`config.json`). All other stat
 the filesystem itself — your folder structure is the source of truth. Sync is delegated to
 whatever cloud provider syncs the chosen folder.
 
+## Browser extension — Clip to Charly
+
+Charly ships with a browser extension that saves the page you're reading, or any
+link, straight into a folder of your library. PDFs download as real files;
+web pages and videos are saved as portable `.charlylink` sidecar files.
+
+While Charly is running it exposes a localhost-only endpoint (`127.0.0.1:8765`)
+that the extension talks to — nothing leaves your machine. See
+[`extension/README.md`](./extension/README.md) for install and usage.
+
 ## Roadmap
 
 See [`ROADMAP.md`](./ROADMAP.md). Highlights:
@@ -43,7 +53,7 @@ See [`ROADMAP.md`](./ROADMAP.md). Highlights:
 - Metadata extraction (title/author/DOI) + full-text search
 - Drag-and-drop organizing
 - Tags & smart collections
-- **Browser extension**: capture the paper currently on screen
+- ✅ **Browser extension**: capture the page/link currently on screen
 - **YouTube capture**: extract studies/citations referenced in a video
 
 ## License

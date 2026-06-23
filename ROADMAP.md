@@ -30,7 +30,8 @@ going beyond the initial MVP.
 
 ## Phase 4 — Capture extension
 
-- [ ] Browser extension: capture the paper/PDF currently on screen into a chosen folder
+- [x] Browser extension: capture the paper/PDF currently on screen into a chosen folder
+      (`extension/`, via a localhost clip server in the desktop app)
 - [ ] Grab citation metadata from the page (publisher pages, Google Scholar, arXiv, PubMed)
 - [ ] YouTube capture: scrub a video and extract studies/papers referenced (description +
       transcript parsing → DOI/title resolution → import)

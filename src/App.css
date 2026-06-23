@@ -326,6 +326,287 @@ button.ghost {
   margin-top: 16px;
 }
 
+/* ---- Segmented Library/People toggle ---- */
+.segmented {
+  display: inline-flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.segmented .seg {
+  border: none;
+  background: transparent;
+  padding: 4px 14px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.segmented .seg.active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* ---- People sidebar rows ---- */
+.person-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 12px;
+  margin: 0 6px;
+  border-radius: 7px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13.5px;
+}
+.person-row:hover {
+  background: #f0f0f3;
+}
+.person-row.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.person-row-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--bg);
+}
+.person-row-initials {
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+/* ---- Person detail ---- */
+.person {
+  flex: 1;
+  overflow-y: auto;
+  padding: 26px 30px;
+}
+.person-header {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+.avatar-wrap {
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.avatar-empty {
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.avatar-edit {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  border: 2px solid var(--panel);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.avatar-wrap:hover .avatar-edit {
+  opacity: 1;
+}
+.person-meta {
+  flex: 1;
+  min-width: 0;
+}
+.person-name {
+  font-size: 24px;
+  font-weight: 600;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  width: 100%;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.person-name:hover,
+.person-name:focus {
+  background: var(--bg);
+  outline: none;
+}
+.person-summary {
+  margin-top: 8px;
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+  padding: 6px;
+  border-radius: 8px;
+}
+.person-summary:hover {
+  border-color: var(--border);
+}
+.person-summary:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--panel);
+  color: var(--text);
+}
+.person-delete {
+  flex-shrink: 0;
+}
+
+.person-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 22px 0 14px;
+}
+.busy {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---- Source cards ---- */
+.sources {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 14px;
+}
+.sources-empty {
+  color: var(--muted);
+  font-size: 14px;
+  padding: 8px 2px;
+}
+.card {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+  background: var(--panel);
+  cursor: pointer;
+  transition: box-shadow 0.12s, transform 0.12s;
+  display: flex;
+  flex-direction: column;
+}
+.card:hover {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  transform: translateY(-1px);
+}
+.card-thumb {
+  position: relative;
+  height: 128px;
+  background: var(--bg);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.thumb-placeholder {
+  font-size: 40px;
+  opacity: 0.6;
+}
+.play-badge {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  padding-left: 3px;
+}
+.card-body {
+  padding: 10px 12px 12px;
+}
+.card-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.card-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-desc {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.card:hover .card-remove {
+  opacity: 1;
+}
+.card-remove:hover {
+  background: var(--danger);
+}
+
+.img-loading,
+.img-fallback {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1c1c1e;
@@ -339,7 +620,8 @@ button.ghost {
   button:hover {
     background: #34343a;
   }
-  .tree-row:hover {
+  .tree-row:hover,
+  .person-row:hover {
     background: #303036;
   }
   .pdf-pages {
