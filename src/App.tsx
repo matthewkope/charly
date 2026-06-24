@@ -211,24 +211,33 @@ export default function App() {
   };
 
   // Drag the sidebar's right edge to resize; drag it narrow to collapse it.
-  const startResize = (startX: number) => {
+  // Pointer capture guarantees we still get the release even if the cursor
+  // leaves the window, so the drag can't get stuck.
+  const startResize = (el: HTMLElement, pointerId: number, startX: number) => {
     const startW = sidebarWidthRef.current;
-    const onMove = (ev: MouseEvent) => {
+    try {
+      el.setPointerCapture(pointerId);
+    } catch {
+      /* ignore */
+    }
+    const onMove = (ev: PointerEvent) => {
       const w = Math.max(60, Math.min(560, startW + (ev.clientX - startX)));
       sidebarWidthRef.current = w;
       setSidebarWidth(w);
     };
     const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
       if (sidebarWidthRef.current < 140) {
         setSidebarCollapsed(true);
         sidebarWidthRef.current = 290;
         setSidebarWidth(290);
       }
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
   };
 
   // Create a new bibliographic item of the chosen type and open it.
@@ -654,9 +663,9 @@ export default function App() {
         {!sidebarCollapsed && (
           <div
             className="sidebar-resizer"
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault();
-              startResize(e.clientX);
+              startResize(e.currentTarget, e.pointerId, e.clientX);
             }}
             title="Drag to resize · drag fully left to hide"
           />

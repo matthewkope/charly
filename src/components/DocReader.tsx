@@ -33,13 +33,19 @@ export default function DocReader({
   return (
     <div className="doc-reader">
       {navOpen && (
-        <DocNav path={path} highlights={highlights} activePage={nav?.page ?? null} onGoTo={goTo} />
+        <DocNav
+          path={path}
+          highlights={highlights}
+          activePage={nav?.page ?? null}
+          onGoTo={goTo}
+          notesOnly
+        />
       )}
       <button
         className="docnav-toggle"
         onClick={() => setNavOpen((o) => !o)}
-        title={navOpen ? "Hide contents & notes pane" : "Show contents & notes pane"}
-        aria-label={navOpen ? "Hide pane" : "Show pane"}
+        title={navOpen ? "Hide notes pane" : "Show notes pane"}
+        aria-label={navOpen ? "Hide notes" : "Show notes"}
       >
         {navOpen ? "‹" : "›"}
       </button>
@@ -60,18 +66,22 @@ function DocNav({
   highlights,
   activePage,
   onGoTo,
+  notesOnly = false,
 }: {
   path: string;
   highlights: Highlight[];
   activePage: number | null;
   onGoTo: (page: number) => void;
+  notesOnly?: boolean;
 }) {
-  const [section, setSection] = useState<Section>("pages");
+  const [section, setSection] = useState<Section>(notesOnly ? "highlights" : "pages");
   const [doc, setDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [outline, setOutline] = useState<OutlineRow[]>([]);
 
   // Load the document (independently of the main viewer) for TOC + thumbnails.
+  // Skipped in notes-only mode, which needs neither.
   useEffect(() => {
+    if (notesOnly) return;
     let cancelled = false;
     let loaded: pdfjsLib.PDFDocumentProxy | null = null;
     (async () => {
@@ -93,7 +103,7 @@ function DocNav({
       cancelled = true;
       loaded?.destroy();
     };
-  }, [path]);
+  }, [path, notesOnly]);
 
   const sortedHl = [...highlights].sort(
     (a, b) => a.page - b.page || (a.rects[0]?.y ?? 0) - (b.rects[0]?.y ?? 0),
@@ -101,29 +111,35 @@ function DocNav({
 
   return (
     <div className="doc-nav">
-      <div className="doc-nav-tabs">
-        <button
-          className={section === "contents" ? "active" : ""}
-          onClick={() => setSection("contents")}
-          title="Table of contents"
-        >
-          Contents
-        </button>
-        <button
-          className={section === "pages" ? "active" : ""}
-          onClick={() => setSection("pages")}
-          title="Page thumbnails"
-        >
-          Pages
-        </button>
-        <button
-          className={section === "highlights" ? "active" : ""}
-          onClick={() => setSection("highlights")}
-          title="Saved highlights"
-        >
+      {notesOnly ? (
+        <div className="doc-nav-title">
           Notes{highlights.length ? ` (${highlights.length})` : ""}
-        </button>
-      </div>
+        </div>
+      ) : (
+        <div className="doc-nav-tabs">
+          <button
+            className={section === "contents" ? "active" : ""}
+            onClick={() => setSection("contents")}
+            title="Table of contents"
+          >
+            Contents
+          </button>
+          <button
+            className={section === "pages" ? "active" : ""}
+            onClick={() => setSection("pages")}
+            title="Page thumbnails"
+          >
+            Pages
+          </button>
+          <button
+            className={section === "highlights" ? "active" : ""}
+            onClick={() => setSection("highlights")}
+            title="Saved highlights"
+          >
+            Notes{highlights.length ? ` (${highlights.length})` : ""}
+          </button>
+        </div>
+      )}
 
       <div className="doc-nav-body">
         {section === "contents" &&
