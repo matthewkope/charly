@@ -91,6 +91,9 @@ export default function App() {
   // dragenter/dragleave fire for every nested element; count depth so the
   // overlay only clears when the cursor truly leaves the window.
   const dragDepth = useRef(0);
+  // Holds the latest chooseLibrary so the (once-subscribed) menu listener can
+  // call it without re-subscribing every render.
+  const chooseLibraryRef = useRef<() => void>(() => {});
 
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
   const bumpMeta = useCallback(() => setMetaVersion((v) => v + 1), []);
@@ -126,6 +129,14 @@ export default function App() {
       un.then((off) => off());
     };
   }, [refresh, bumpMeta]);
+
+  // Native menu "File ▸ Open Folder…" → choose the library folder.
+  useEffect(() => {
+    const un = listen("menu:open-folder", () => chooseLibraryRef.current());
+    return () => {
+      un.then((off) => off());
+    };
+  }, []);
 
   // Keep the tag list fresh as the library and metadata change.
   useEffect(() => {
@@ -168,6 +179,7 @@ export default function App() {
     setCurrentFolder(path);
     refresh();
   };
+  chooseLibraryRef.current = chooseLibrary;
 
   // Single click: select/inspect the item, and open readable docs in a tab.
   // Links are NOT navigated here — that needs a double-click (see activateEntry).
@@ -443,26 +455,17 @@ export default function App() {
         </div>
       )}
       <header className="topbar" data-tauri-drag-region>
-        <div
-          className="brand"
-          role="button"
-          title="Library home"
-          onClick={() => setActivePath(null)}
-        >
-          📚 Charly
-        </div>
         <div className="tabbar" role="tablist">
-          {activePath === null && (
-            <div
-              role="tab"
-              aria-selected={true}
-              className="tab home-tab active"
-              title="Library home"
-            >
-              <span className="tab-icon">📚</span>
-              <span className="tab-label">{baseName(currentFolder ?? library)}</span>
-            </div>
-          )}
+          <div
+            role="tab"
+            aria-selected={activePath === null}
+            className={`tab home-tab${activePath === null ? " active" : ""}`}
+            onClick={() => setActivePath(null)}
+            title="Library home"
+          >
+            <span className="tab-icon">🏠</span>
+            <span className="tab-label">{baseName(currentFolder ?? library)}</span>
+          </div>
           {tabs.map((t) => (
             <div
               key={t.path}
@@ -491,50 +494,6 @@ export default function App() {
           ))}
           <button className="tab-new" title="Open a document in a new tab" onClick={openNewTab}>
             +
-          </button>
-        </div>
-        <div className="topbar-actions">
-          <div className="newitem-wrap">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setItemMenu((o) => !o);
-              }}
-              title="New item"
-            >
-              New Item ▾
-            </button>
-            {itemMenu && (
-              <div className="newitem-menu" onClick={(e) => e.stopPropagation()}>
-                {COMMON_TYPES.map((t) => (
-                  <button
-                    key={`c-${t.key}`}
-                    onClick={() => {
-                      setItemMenu(false);
-                      newItem(t.key);
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-                <div className="menu-sep" />
-                {ALL_TYPES.map((t) => (
-                  <button
-                    key={t.key}
-                    onClick={() => {
-                      setItemMenu(false);
-                      newItem(t.key);
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <button onClick={() => doImport(library)}>Import</button>
-          <button className="ghost" onClick={chooseLibrary} title={library}>
-            {baseName(library)} ▾
           </button>
         </div>
       </header>
@@ -659,7 +618,60 @@ export default function App() {
             <div className="home">
               <div className="list-toolbar">
                 <span className="list-folder">{baseName(currentFolder ?? library)}</span>
-                <button onClick={() => doImport(currentFolder ?? library)}>Import</button>
+                <div className="newitem-wrap">
+                  <button
+                    className="icon-btn"
+                    title="New item"
+                    aria-label="New item"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setItemMenu((o) => !o);
+                    }}
+                  >
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
+                      <path d="M14 3v5h5" />
+                      <line x1="11.5" y1="11" x2="11.5" y2="17" />
+                      <line x1="8.5" y1="14" x2="14.5" y2="14" />
+                    </svg>
+                  </button>
+                  {itemMenu && (
+                    <div className="newitem-menu" onClick={(e) => e.stopPropagation()}>
+                      {COMMON_TYPES.map((t) => (
+                        <button
+                          key={`c-${t.key}`}
+                          onClick={() => {
+                            setItemMenu(false);
+                            newItem(t.key);
+                          }}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                      <div className="menu-sep" />
+                      {ALL_TYPES.map((t) => (
+                        <button
+                          key={t.key}
+                          onClick={() => {
+                            setItemMenu(false);
+                            newItem(t.key);
+                          }}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
               <ItemList
                 library={library}

@@ -222,11 +222,13 @@ button.ghost {
   background: var(--panel);
 }
 .list-folder {
+  flex: 1;
   font-weight: 600;
   font-size: 13px;
 }
-.list-toolbar button {
-  margin-left: auto;
+.list-toolbar .newitem-menu {
+  left: auto;
+  right: 0;
 }
 .itemlist {
   flex: 1;
