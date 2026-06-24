@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   clipLink,
   createFolder,
+  createItem,
   deleteEntry,
   Entry,
   findByTag,
@@ -23,7 +25,10 @@ import Tree from "./components/Tree";
 import DocReader from "./components/DocReader";
 import EpubViewer from "./components/EpubViewer";
 import Inspector from "./components/Inspector";
+import ItemEditor from "./components/ItemEditor";
+import ItemList from "./components/ItemList";
 import PromptModal, { PromptState } from "./components/PromptModal";
+import { ALL_TYPES, COMMON_TYPES } from "./itemTypes";
 import "./App.css";
 
 interface MenuState {
@@ -39,6 +44,7 @@ function baseName(path: string): string {
 function fileIcon(ext: string): string {
   if (ext === "epub") return "📗";
   if (ext === "charlylink") return "🔗";
+  if (ext === "charlyitem") return "📄";
   return "📕";
 }
 
@@ -64,7 +70,6 @@ function dragHasPayload(dt: DataTransfer): boolean {
 export default function App() {
   const [library, setLib] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [version, setVersion] = useState(0);
   const [metaVersion, setMetaVersion] = useState(0);
   const [tabs, setTabs] = useState<Entry[]>([]);
@@ -74,9 +79,14 @@ export default function App() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
   const [inspected, setInspected] = useState<Entry | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  // The folder whose contents fill the item-list "home" view (null = library root).
+  const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [tagResults, setTagResults] = useState<Entry[]>([]);
+  const [itemMenu, setItemMenu] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   // dragenter/dragleave fire for every nested element; count depth so the
   // overlay only clears when the cursor truly leaves the window.
@@ -85,6 +95,11 @@ export default function App() {
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
   const bumpMeta = useCallback(() => setMetaVersion((v) => v + 1), []);
 
+  // Charly defaults to a light theme regardless of the OS appearance.
+  useEffect(() => {
+    getCurrentWindow().setTheme("light").catch(() => {});
+  }, []);
+
   useEffect(() => {
     getLibrary()
       .then((p) => setLib(p))
@@ -92,7 +107,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const close = () => setMenu(null);
+    const close = () => {
+      setMenu(null);
+      setItemMenu(false);
+    };
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
   }, []);
@@ -147,6 +165,7 @@ export default function App() {
     setActivePath(null);
     setInspected(null);
     setTagFilter(null);
+    setCurrentFolder(path);
     refresh();
   };
 
@@ -155,10 +174,51 @@ export default function App() {
   const openEntry = (entry: Entry) => {
     if (entry.is_dir) return;
     setInspected(entry);
-    if (isSupported(entry.ext)) {
+    setInspectorOpen(true);
+    if (isSupported(entry.ext) || entry.ext === "charlyitem") {
       setTabs((prev) => (prev.some((t) => t.path === entry.path) ? prev : [...prev, entry]));
       setActivePath(entry.path);
     }
+  };
+
+  // Item-list single click: just select + inspect (no tab); double-click opens.
+  const selectItem = (entry: Entry) => {
+    setInspected(entry);
+    setInspectorOpen(true);
+  };
+
+  // Select a folder in the tree → show its contents in the home item list.
+  const selectFolder = (entry: Entry) => {
+    setCurrentFolder(entry.path);
+    setActivePath(null);
+    setQuery("");
+    setTagFilter(null);
+  };
+
+  // Create a new bibliographic item of the chosen type and open it.
+  const newItem = async (itemType: string) => {
+    if (!library) return;
+    try {
+      const path = await createItem(library, itemType, "");
+      const entry: Entry = {
+        name: path.split("/").pop() ?? path,
+        path,
+        is_dir: false,
+        ext: "charlyitem",
+      };
+      setTabs((prev) => [...prev, entry]);
+      setActivePath(path);
+      setInspected(entry);
+      refresh();
+    } catch (e) {
+      await confirm(String(e), { title: "Couldn’t create item", kind: "error" });
+    }
+  };
+
+  // Open an arbitrary path (e.g. an item's attached PDF) in a tab.
+  const openPath = (p: string, name: string) => {
+    const ext = (p.split(".").pop() ?? "").toLowerCase();
+    openEntry({ name, path: p, is_dir: false, ext });
   };
 
   // Double click / explicit activation: open a link in the browser.
@@ -330,7 +390,9 @@ export default function App() {
     <div
       key={e.path}
       className={`tree-row${inspected?.path === e.path || activePath === e.path ? " selected" : ""}${
-        !isSupported(e.ext) && e.ext !== "charlylink" ? " unsupported" : ""
+        !isSupported(e.ext) && e.ext !== "charlylink" && e.ext !== "charlyitem"
+          ? " unsupported"
+          : ""
       }`}
       onClick={() => openEntry(e)}
       onDoubleClick={() => activateEntry(e)}
@@ -380,22 +442,27 @@ export default function App() {
           </div>
         </div>
       )}
-      <header className="topbar">
+      <header className="topbar" data-tauri-drag-region>
         <div
           className="brand"
           role="button"
-          title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-          onClick={() => setSidebarOpen((o) => !o)}
+          title="Library home"
+          onClick={() => setActivePath(null)}
         >
           📚 Charly
         </div>
-        <input
-          className="search"
-          placeholder="Search your library…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
         <div className="tabbar" role="tablist">
+          {activePath === null && (
+            <div
+              role="tab"
+              aria-selected={true}
+              className="tab home-tab active"
+              title="Library home"
+            >
+              <span className="tab-icon">📚</span>
+              <span className="tab-label">{baseName(currentFolder ?? library)}</span>
+            </div>
+          )}
           {tabs.map((t) => (
             <div
               key={t.path}
@@ -427,8 +494,45 @@ export default function App() {
           </button>
         </div>
         <div className="topbar-actions">
+          <div className="newitem-wrap">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setItemMenu((o) => !o);
+              }}
+              title="New item"
+            >
+              New Item ▾
+            </button>
+            {itemMenu && (
+              <div className="newitem-menu" onClick={(e) => e.stopPropagation()}>
+                {COMMON_TYPES.map((t) => (
+                  <button
+                    key={`c-${t.key}`}
+                    onClick={() => {
+                      setItemMenu(false);
+                      newItem(t.key);
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+                <div className="menu-sep" />
+                {ALL_TYPES.map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => {
+                      setItemMenu(false);
+                      newItem(t.key);
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button onClick={() => doImport(library)}>Import</button>
-          <button onClick={() => askNewFolder(library)}>New Folder</button>
           <button className="ghost" onClick={chooseLibrary} title={library}>
             {baseName(library)} ▾
           </button>
@@ -436,8 +540,71 @@ export default function App() {
       </header>
 
       <div className="body">
-        {sidebarOpen && (
         <aside className="sidebar">
+          <div className="sidebar-toolbar">
+            <button
+              className="icon-btn"
+              onClick={() => askNewFolder(library)}
+              title="New folder"
+              aria-label="New folder"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+                <line x1="12" y1="11" x2="12" y2="17" />
+                <line x1="9" y1="14" x2="15" y2="14" />
+              </svg>
+            </button>
+            <div className={`toolbar-search${searchOpen || query ? " open" : ""}`}>
+              {searchOpen || query ? (
+                <input
+                  className="sidebar-search"
+                  placeholder="Search…"
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onBlur={() => {
+                    if (!query) setSearchOpen(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setQuery("");
+                      setSearchOpen(false);
+                    }
+                  }}
+                />
+              ) : (
+                <button
+                  className="icon-btn"
+                  onClick={() => setSearchOpen(true)}
+                  title="Search"
+                  aria-label="Search"
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="11" cy="11" r="7" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
           {tags.length > 0 && (
             <div className="tagbar">
               {tags.map((t) => (
@@ -478,21 +645,41 @@ export default function App() {
               root={library}
               version={version}
               selectedPath={inspected?.path ?? activePath}
-              onSelect={openEntry}
+              selectedFolder={currentFolder ?? library}
+              onSelect={selectItem}
+              onSelectFolder={selectFolder}
               onActivate={activateEntry}
               onContext={(entry, x, y) => setMenu({ entry, x, y })}
             />
           )}
         </aside>
-        )}
 
         <main className="content">
-          <div className="doc-area">
+          {activePath === null && (
+            <div className="home">
+              <div className="list-toolbar">
+                <span className="list-folder">{baseName(currentFolder ?? library)}</span>
+                <button onClick={() => doImport(currentFolder ?? library)}>Import</button>
+              </div>
+              <ItemList
+                library={library}
+                folder={currentFolder ?? library}
+                version={version}
+                selectedPath={inspected?.path ?? null}
+                onSelect={selectItem}
+                onOpen={activateEntry}
+                onContext={(entry, x, y) => setMenu({ entry, x, y })}
+              />
+            </div>
+          )}
+          <div className={`doc-area${activePath ? "" : " hidden"}`}>
             <div className="tab-stack">
               {tabs.map((t) => (
                 <div key={t.path} className={`tab-panel${t.path === activePath ? "" : " hidden"}`}>
                   {t.ext === "pdf" ? (
                     <DocReader path={t.path} active={t.path === activePath} library={library} />
+                  ) : t.ext === "charlyitem" ? (
+                    <ItemEditor path={t.path} library={library} onOpenPath={openPath} />
                   ) : (
                     <EpubViewer path={t.path} />
                   )}
@@ -510,16 +697,43 @@ export default function App() {
           </div>
         </main>
 
-        {inspected && (
+        {inspectorOpen && inspected && (
           <Inspector
             key={inspected.path}
             library={library}
             entry={inspected}
             allTags={tags.map((t) => t.tag)}
-            onClose={() => setInspected(null)}
+            onClose={() => setInspectorOpen(false)}
             onChanged={bumpMeta}
           />
         )}
+
+        <aside className="info-rail">
+          <button
+            className={`rail-btn${inspectorOpen ? " active" : ""}`}
+            title="Info"
+            aria-label="Toggle info panel"
+            onClick={() => setInspectorOpen((o) => !o)}
+          >
+            ⓘ
+          </button>
+          <button
+            className="rail-btn"
+            title="Tags"
+            aria-label="Tags"
+            onClick={() => inspected && setInspectorOpen(true)}
+          >
+            🏷
+          </button>
+          <button
+            className="rail-btn"
+            title="Notes"
+            aria-label="Notes"
+            onClick={() => inspected && setInspectorOpen(true)}
+          >
+            🗒
+          </button>
+        </aside>
       </div>
 
       {menu && (

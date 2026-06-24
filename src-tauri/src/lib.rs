@@ -400,6 +400,76 @@ fn file_info(path: String) -> Result<FileInfo, String> {
     })
 }
 
+/// A file row with display metadata, for the Zotero-style list view.
+#[derive(Serialize)]
+struct FileItem {
+    name: String,
+    path: String,
+    ext: String,
+    title: String,   // alias from meta (frontend falls back to the filename)
+    creator: String, // e.g. a clipped link's site; empty otherwise
+    modified_ms: u64,
+    size: u64,
+}
+
+/// List the files in a folder with their title alias, creator, and modified
+/// time resolved in one call (powers the item-list home view).
+#[tauri::command]
+fn list_items(library: String, folder: String) -> Result<Vec<FileItem>, String> {
+    let idx = read_meta_index(&library);
+    let mut items: Vec<FileItem> = fs::read_dir(&folder)
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .map(|d| d.path())
+        .filter(|p| p.is_file())
+        .filter_map(|p| {
+            let name = p.file_name()?.to_string_lossy().to_string();
+            if name.starts_with('.') {
+                return None;
+            }
+            let ext = p
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let path_s = p.to_string_lossy().to_string();
+            let title = rel_key(&library, &path_s)
+                .and_then(|k| idx.get(&k).map(|m| m.title.clone()))
+                .unwrap_or_default();
+            let creator = if ext == "charlylink" {
+                fs::read_to_string(&p)
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .and_then(|v| v.get("site").and_then(|x| x.as_str().map(str::to_string)))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let (modified_ms, size) = fs::metadata(&p)
+                .map(|md| {
+                    let m = md
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    (m, md.len())
+                })
+                .unwrap_or((0, 0));
+            Some(FileItem {
+                name,
+                path: path_s,
+                ext,
+                title,
+                creator,
+                modified_ms,
+                size,
+            })
+        })
+        .collect();
+    items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(items)
+}
+
 #[derive(Serialize)]
 struct TagCount {
     tag: String,
@@ -511,6 +581,250 @@ fn save_highlights(
     }
     let json = serde_json::to_string_pretty(&highlights).map_err(|e| e.to_string())?;
     fs::write(hp, json).map_err(|e| e.to_string())
+}
+
+// ---- Bibliographic items (Zotero-style records: `<name>.charlyitem`) -------
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct Creator {
+    #[serde(default)]
+    first: String,
+    #[serde(default)]
+    last: String,
+    #[serde(default, rename = "creatorType")]
+    creator_type: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct Item {
+    #[serde(rename = "itemType")]
+    item_type: String,
+    #[serde(default)]
+    fields: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    creators: Vec<Creator>,
+    #[serde(default)]
+    attachments: Vec<String>,
+    #[serde(default, rename = "dateAdded")]
+    date_added: String,
+    #[serde(default, rename = "dateModified")]
+    date_modified: String,
+}
+
+/// Seconds since the Unix epoch, as a string (no extra date dependency).
+fn now_secs() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_default()
+}
+
+fn read_item(path: &str) -> Result<Item, String> {
+    let s = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&s).map_err(|e| e.to_string())
+}
+
+fn write_item(path: &Path, item: &Item) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(item).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_item(dir: String, item_type: String, title: String) -> Result<String, String> {
+    let folder = Path::new(&dir);
+    fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+    let mut base = sanitize(if title.trim().is_empty() { "New Item" } else { title.trim() });
+    if base.chars().count() > 100 {
+        base = base.chars().take(100).collect();
+    }
+    let mut dest = folder.join(format!("{base}.charlyitem"));
+    let mut n = 2;
+    while dest.exists() {
+        dest = folder.join(format!("{base} ({n}).charlyitem"));
+        n += 1;
+    }
+    let mut fields = std::collections::BTreeMap::new();
+    if !title.trim().is_empty() {
+        fields.insert("title".to_string(), title.trim().to_string());
+    }
+    let item = Item {
+        item_type,
+        fields,
+        date_added: now_secs(),
+        date_modified: now_secs(),
+        ..Default::default()
+    };
+    write_item(&dest, &item)?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn get_item(path: String) -> Result<Item, String> {
+    read_item(&path)
+}
+
+#[tauri::command]
+fn save_item(path: String, mut item: Item) -> Result<(), String> {
+    item.date_modified = now_secs();
+    write_item(Path::new(&path), &item)
+}
+
+/// Copy PDFs into the item's folder and attach them to the record.
+#[tauri::command]
+fn attach_to_item(path: String, sources: Vec<String>) -> Result<Item, String> {
+    let dir = Path::new(&path).parent().ok_or("Invalid item path")?;
+    let mut item = read_item(&path)?;
+    for src in sources {
+        let s = Path::new(&src);
+        let Some(file_name) = s.file_name() else {
+            continue;
+        };
+        let mut dest = dir.join(file_name);
+        if dest.exists() {
+            let stem = s.file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
+            let ext = s.extension().map(|x| format!(".{}", x.to_string_lossy())).unwrap_or_default();
+            let mut n = 2;
+            loop {
+                let c = dir.join(format!("{stem} ({n}){ext}"));
+                if !c.exists() {
+                    dest = c;
+                    break;
+                }
+                n += 1;
+            }
+        }
+        fs::copy(s, &dest).map_err(|e| e.to_string())?;
+        let rel = dest.file_name().unwrap().to_string_lossy().to_string();
+        if !item.attachments.contains(&rel) {
+            item.attachments.push(rel);
+        }
+    }
+    item.date_modified = now_secs();
+    write_item(Path::new(&path), &item)?;
+    Ok(item)
+}
+
+// ---- Identifier lookup (DOI via Crossref) ---------------------------------
+
+#[derive(Serialize)]
+struct FetchedItem {
+    #[serde(rename = "itemType")]
+    item_type: String,
+    fields: std::collections::BTreeMap<String, String>,
+    creators: Vec<Creator>,
+}
+
+fn extract_doi(s: &str) -> Option<String> {
+    let lower = s.to_lowercase();
+    let pos = lower.find("10.")?;
+    let cand = s[pos..].trim_end_matches(|c: char| ".,;)]\"' ".contains(c));
+    (cand.len() > 4).then(|| cand.to_string())
+}
+
+fn strip_tags(s: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for ch in s.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn cr_str(m: &serde_json::Value, key: &str) -> String {
+    m.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string()
+}
+
+fn cr_first(m: &serde_json::Value, key: &str) -> String {
+    m.get(key)
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn crossref_to_item(m: &serde_json::Value, doi: &str) -> FetchedItem {
+    let mut fields: std::collections::BTreeMap<String, String> = Default::default();
+    let mut put = |k: &str, v: String| {
+        if !v.is_empty() {
+            fields.insert(k.to_string(), v);
+        }
+    };
+    put("title", cr_first(m, "title"));
+    put("publicationTitle", cr_first(m, "container-title"));
+    put("journalAbbreviation", cr_first(m, "short-container-title"));
+    put("volume", cr_str(m, "volume"));
+    put("issue", cr_str(m, "issue"));
+    put("pages", cr_str(m, "page"));
+    put("publisher", cr_str(m, "publisher"));
+    put("DOI", doi.to_string());
+    put("url", cr_str(m, "URL"));
+    put("ISSN", cr_first(m, "ISSN"));
+    put("language", cr_str(m, "language"));
+    let abs = cr_str(m, "abstract");
+    if !abs.is_empty() {
+        put("abstractNote", strip_tags(&abs));
+    }
+    if let Some(parts) = m
+        .get("issued")
+        .and_then(|i| i.get("date-parts"))
+        .and_then(|d| d.as_array())
+        .and_then(|a| a.first())
+        .and_then(|p| p.as_array())
+    {
+        let nums: Vec<String> = parts.iter().filter_map(|n| n.as_i64()).map(|n| format!("{n:02}")).collect();
+        if !nums.is_empty() {
+            put("date", nums.join("-"));
+        }
+    }
+    let mut creators = Vec::new();
+    if let Some(arr) = m.get("author").and_then(|a| a.as_array()) {
+        for a in arr {
+            creators.push(Creator {
+                first: a.get("given").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                last: a.get("family").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                creator_type: "author".to_string(),
+            });
+        }
+    }
+    let item_type = match cr_str(m, "type").as_str() {
+        "book" | "monograph" => "book",
+        "book-chapter" => "bookSection",
+        "proceedings-article" => "conferencePaper",
+        "posted-content" => "preprint",
+        "report" => "report",
+        "dataset" => "dataset",
+        "dissertation" => "thesis",
+        _ => "journalArticle",
+    }
+    .to_string();
+    FetchedItem { item_type, fields, creators }
+}
+
+/// Look up an identifier (currently DOI, also accepted inside a URL) via Crossref.
+#[tauri::command]
+async fn fetch_identifier(identifier: String) -> Result<FetchedItem, String> {
+    let doi = extract_doi(identifier.trim()).ok_or("Enter a DOI (or a link containing one)")?;
+    let url = format!("https://api.crossref.org/works/{doi}");
+    let c = http_client()?;
+    let resp = c
+        .get(&url)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("No match for that DOI ({})", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let m = v.get("message").ok_or("Unexpected response from Crossref")?;
+    Ok(crossref_to_item(m, &doi))
 }
 
 // ---- Web fetching / link metadata -----------------------------------------
@@ -930,10 +1244,16 @@ pub fn run() {
             set_item_note,
             set_item_title,
             file_info,
+            list_items,
             list_all_tags,
             find_by_tag,
             get_highlights,
             save_highlights,
+            create_item,
+            get_item,
+            save_item,
+            attach_to_item,
+            fetch_identifier,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

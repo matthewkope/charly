@@ -6,7 +6,9 @@ interface NodeProps {
   depth: number;
   version: number;
   selectedPath: string | null;
+  selectedFolder?: string | null;
   onSelect: (entry: Entry) => void;
+  onSelectFolder?: (entry: Entry) => void;
   onActivate: (entry: Entry) => void;
   onContext: (entry: Entry, x: number, y: number) => void;
 }
@@ -14,10 +16,21 @@ interface NodeProps {
 function fileIcon(ext: string): string {
   if (ext === "pdf") return "📕";
   if (ext === "epub") return "📗";
+  if (ext === "charlylink") return "🔗";
   return "📄";
 }
 
-function TreeNode({ entry, depth, version, selectedPath, onSelect, onActivate, onContext }: NodeProps) {
+function TreeNode({
+  entry,
+  depth,
+  version,
+  selectedPath,
+  selectedFolder,
+  onSelect,
+  onSelectFolder,
+  onActivate,
+  onContext,
+}: NodeProps) {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<Entry[] | null>(null);
 
@@ -27,51 +40,68 @@ function TreeNode({ entry, depth, version, selectedPath, onSelect, onActivate, o
     }
   }, [entry.path, entry.is_dir, expanded, version]);
 
-  const isSelected = selectedPath === entry.path;
-  const indent = { paddingLeft: 8 + depth * 14 };
-
-  const handleClick = () => {
-    if (entry.is_dir) {
-      setExpanded((e) => !e);
-    } else {
-      onSelect(entry);
-    }
-  };
+  const isSelected = entry.is_dir
+    ? selectedFolder === entry.path
+    : selectedPath === entry.path;
+  const indent = { paddingLeft: 6 + depth * 13 };
 
   return (
     <>
       <div
         className={`tree-row${isSelected ? " selected" : ""}${
-          !entry.is_dir && !isSupported(entry.ext) ? " unsupported" : ""
+          !entry.is_dir && !isSupported(entry.ext) && entry.ext !== "charlylink"
+            ? " unsupported"
+            : ""
         }`}
         style={indent}
-        onClick={handleClick}
-        onDoubleClick={() => {
-          if (!entry.is_dir) onActivate(entry);
-        }}
+        onClick={() =>
+          entry.is_dir
+            ? onSelectFolder
+              ? onSelectFolder(entry)
+              : setExpanded((e) => !e)
+            : onSelect(entry)
+        }
+        onDoubleClick={() => (entry.is_dir ? setExpanded((e) => !e) : onActivate(entry))}
         onContextMenu={(e) => {
           e.preventDefault();
           onContext(entry, e.clientX, e.clientY);
         }}
-        title={!entry.is_dir && entry.ext === "charlylink" ? "Double-click to open in browser" : entry.name}
+        title={entry.name}
       >
+        {entry.is_dir ? (
+          <span
+            className="tree-twisty"
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded((x) => !x);
+            }}
+          >
+            {expanded ? "▾" : "▸"}
+          </span>
+        ) : (
+          <span className="tree-twisty tree-twisty-leaf" />
+        )}
         <span className="tree-icon">
           {entry.is_dir ? (expanded ? "📂" : "📁") : fileIcon(entry.ext)}
         </span>
         <span className="tree-label">{entry.name}</span>
       </div>
-      {entry.is_dir && expanded && children?.map((child) => (
-        <TreeNode
-          key={child.path}
-          entry={child}
-          depth={depth + 1}
-          version={version}
-          selectedPath={selectedPath}
-          onSelect={onSelect}
-          onActivate={onActivate}
-          onContext={onContext}
-        />
-      ))}
+      {entry.is_dir &&
+        expanded &&
+        children?.map((child) => (
+          <TreeNode
+            key={child.path}
+            entry={child}
+            depth={depth + 1}
+            version={version}
+            selectedPath={selectedPath}
+            selectedFolder={selectedFolder}
+            onSelect={onSelect}
+            onSelectFolder={onSelectFolder}
+            onActivate={onActivate}
+            onContext={onContext}
+          />
+        ))}
     </>
   );
 }
@@ -80,12 +110,23 @@ interface TreeProps {
   root: string;
   version: number;
   selectedPath: string | null;
+  selectedFolder?: string | null;
   onSelect: (entry: Entry) => void;
+  onSelectFolder?: (entry: Entry) => void;
   onActivate: (entry: Entry) => void;
   onContext: (entry: Entry, x: number, y: number) => void;
 }
 
-export default function Tree({ root, version, selectedPath, onSelect, onActivate, onContext }: TreeProps) {
+export default function Tree({
+  root,
+  version,
+  selectedPath,
+  selectedFolder = null,
+  onSelect,
+  onSelectFolder,
+  onActivate,
+  onContext,
+}: TreeProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
 
   useEffect(() => {
@@ -93,7 +134,9 @@ export default function Tree({ root, version, selectedPath, onSelect, onActivate
   }, [root, version]);
 
   if (entries.length === 0) {
-    return <div className="tree-empty">This folder is empty. Import documents or create a folder.</div>;
+    return (
+      <div className="tree-empty">This folder is empty. Import documents or create a folder.</div>
+    );
   }
 
   return (
@@ -105,7 +148,9 @@ export default function Tree({ root, version, selectedPath, onSelect, onActivate
           depth={0}
           version={version}
           selectedPath={selectedPath}
+          selectedFolder={selectedFolder}
           onSelect={onSelect}
+          onSelectFolder={onSelectFolder}
           onActivate={onActivate}
           onContext={onContext}
         />

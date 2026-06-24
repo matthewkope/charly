@@ -26,12 +26,23 @@ export default function DocReader({
 }) {
   const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [nav, setNav] = useState<{ page: number; nonce: number } | null>(null);
+  const [navOpen, setNavOpen] = useState(true);
 
   const goTo = (page: number) => setNav((n) => ({ page, nonce: (n?.nonce ?? 0) + 1 }));
 
   return (
     <div className="doc-reader">
-      <DocNav path={path} highlights={highlights} activePage={nav?.page ?? null} onGoTo={goTo} />
+      {navOpen && (
+        <DocNav path={path} highlights={highlights} activePage={nav?.page ?? null} onGoTo={goTo} />
+      )}
+      <button
+        className="docnav-toggle"
+        onClick={() => setNavOpen((o) => !o)}
+        title={navOpen ? "Hide contents & notes pane" : "Show contents & notes pane"}
+        aria-label={navOpen ? "Hide pane" : "Show pane"}
+      >
+        {navOpen ? "‹" : "›"}
+      </button>
       <PdfViewer
         path={path}
         library={library}

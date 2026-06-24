@@ -80,6 +80,20 @@ export const setItemNote = (library: string, path: string, note: string) =>
 export const setItemTitle = (library: string, path: string, title: string) =>
   invoke<void>("set_item_title", { library, path, title });
 export const fileInfo = (path: string) => invoke<FileInfo>("file_info", { path });
+
+/** A file row for the item-list home view. */
+export interface FileItem {
+  name: string;
+  path: string;
+  ext: string;
+  title: string; // alias; empty → fall back to filename
+  creator: string;
+  modified_ms: number;
+  size: number;
+}
+
+export const listItems = (library: string, folder: string) =>
+  invoke<FileItem[]>("list_items", { library, folder });
 export const listAllTags = (library: string) =>
   invoke<TagCount[]>("list_all_tags", { library });
 export const findByTag = (library: string, tag: string) =>
@@ -162,3 +176,36 @@ export const getHighlights = (library: string, path: string) =>
   invoke<Highlight[]>("get_highlights", { library, path });
 export const saveHighlights = (library: string, path: string, highlights: Highlight[]) =>
   invoke<void>("save_highlights", { library, path, highlights });
+
+// ---- Bibliographic items (Zotero-style records) --------------------------
+
+export interface Creator {
+  first: string;
+  last: string;
+  creatorType: string;
+}
+
+export interface Item {
+  itemType: string;
+  fields: Record<string, string>;
+  creators: Creator[];
+  attachments: string[]; // relative filenames in the item's folder
+  dateAdded: string; // unix seconds (string)
+  dateModified: string;
+}
+
+/** Result of an identifier (DOI) lookup — merge into a new/existing item. */
+export interface FetchedItem {
+  itemType: string;
+  fields: Record<string, string>;
+  creators: Creator[];
+}
+
+export const createItem = (dir: string, itemType: string, title: string) =>
+  invoke<string>("create_item", { dir, itemType, title });
+export const getItem = (path: string) => invoke<Item>("get_item", { path });
+export const saveItem = (path: string, item: Item) => invoke<void>("save_item", { path, item });
+export const attachToItem = (path: string, sources: string[]) =>
+  invoke<Item>("attach_to_item", { path, sources });
+export const fetchIdentifier = (identifier: string) =>
+  invoke<FetchedItem>("fetch_identifier", { identifier });
