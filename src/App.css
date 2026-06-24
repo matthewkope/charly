@@ -1918,3 +1918,48 @@ button.ghost {
   background: var(--bg);
   color: var(--text);
 }
+
+/* ---- Resizable / collapsible sidebar ---- */
+.sidebar-resizer {
+  flex-shrink: 0;
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.12s;
+}
+.sidebar-resizer:hover {
+  background: var(--accent-soft);
+}
+.sidebar-reopen {
+  flex-shrink: 0;
+  width: 20px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.sidebar-reopen:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ---- Striped item rows (light theme) ---- */
+.itemlist-body .item-row:nth-child(odd) {
+  background: var(--panel);
+}
+.itemlist-body .item-row:nth-child(even) {
+  background: #f3f4f6;
+}
+.itemlist-body .item-row:hover {
+  background: #e9ebef;
+}
+.itemlist-body .item-row.selected {
+  background: var(--accent-soft);
+}

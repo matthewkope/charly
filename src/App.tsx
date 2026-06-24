@@ -88,9 +88,12 @@ export default function App() {
   const [itemMenu, setItemMenu] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(290);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // dragenter/dragleave fire for every nested element; count depth so the
   // overlay only clears when the cursor truly leaves the window.
   const dragDepth = useRef(0);
+  const sidebarWidthRef = useRef(290);
   // Holds the latest chooseLibrary so the (once-subscribed) menu listener can
   // call it without re-subscribing every render.
   const chooseLibraryRef = useRef<() => void>(() => {});
@@ -205,6 +208,27 @@ export default function App() {
     setActivePath(null);
     setQuery("");
     setTagFilter(null);
+  };
+
+  // Drag the sidebar's right edge to resize; drag it narrow to collapse it.
+  const startResize = (startX: number) => {
+    const startW = sidebarWidthRef.current;
+    const onMove = (ev: MouseEvent) => {
+      const w = Math.max(60, Math.min(560, startW + (ev.clientX - startX)));
+      sidebarWidthRef.current = w;
+      setSidebarWidth(w);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      if (sidebarWidthRef.current < 140) {
+        setSidebarCollapsed(true);
+        sidebarWidthRef.current = 290;
+        setSidebarWidth(290);
+      }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   };
 
   // Create a new bibliographic item of the chosen type and open it.
@@ -499,7 +523,21 @@ export default function App() {
       </header>
 
       <div className="body">
-        <aside className="sidebar">
+        {sidebarCollapsed && (
+          <button
+            className="sidebar-reopen"
+            onClick={() => setSidebarCollapsed(false)}
+            title="Show sidebar"
+            aria-label="Show sidebar"
+          >
+            ›
+          </button>
+        )}
+        {!sidebarCollapsed && (
+        <aside
+          className="sidebar"
+          style={{ width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth }}
+        >
           <div className="sidebar-toolbar">
             <button
               className="icon-btn"
@@ -612,6 +650,17 @@ export default function App() {
             />
           )}
         </aside>
+        )}
+        {!sidebarCollapsed && (
+          <div
+            className="sidebar-resizer"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              startResize(e.clientX);
+            }}
+            title="Drag to resize · drag fully left to hide"
+          />
+        )}
 
         <main className="content">
           {activePath === null && (
