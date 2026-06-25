@@ -615,6 +615,129 @@ fn empty_trash(library: String) -> Result<(), String> {
     write_trash(&library, &[])
 }
 
+// ---- Saved searches (rule-based virtual collections) -----------------------
+
+#[derive(Serialize, Deserialize, Clone)]
+struct SearchRule {
+    field: String, // "title" | "tag" | "type"
+    op: String,    // "contains" | "is"
+    value: String,
+}
+
+fn match_all_default() -> String {
+    "all".into()
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct SavedSearch {
+    id: String,
+    name: String,
+    #[serde(rename = "match", default = "match_all_default")]
+    match_mode: String, // "all" | "any"
+    #[serde(default)]
+    rules: Vec<SearchRule>,
+}
+
+fn searches_path(library: &str) -> PathBuf {
+    Path::new(library).join(".charly").join("searches.json")
+}
+fn read_searches(library: &str) -> Vec<SavedSearch> {
+    fs::read_to_string(searches_path(library))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+fn write_searches(library: &str, list: &[SavedSearch]) -> Result<(), String> {
+    let p = searches_path(library);
+    if let Some(d) = p.parent() {
+        fs::create_dir_all(d).map_err(|e| e.to_string())?;
+    }
+    fs::write(p, serde_json::to_string_pretty(list).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_saved_searches(library: String) -> Result<Vec<SavedSearch>, String> {
+    Ok(read_searches(&library))
+}
+
+#[tauri::command]
+fn save_saved_search(library: String, search: SavedSearch) -> Result<Vec<SavedSearch>, String> {
+    let mut list = read_searches(&library);
+    match list.iter_mut().find(|s| s.id == search.id) {
+        Some(existing) => *existing = search,
+        None => list.push(search),
+    }
+    write_searches(&library, &list)?;
+    Ok(list)
+}
+
+#[tauri::command]
+fn delete_saved_search(library: String, id: String) -> Result<Vec<SavedSearch>, String> {
+    let mut list = read_searches(&library);
+    list.retain(|s| s.id != id);
+    write_searches(&library, &list)?;
+    Ok(list)
+}
+
+fn rule_matches(rule: &SearchRule, it: &FileItem, tags: &[String]) -> bool {
+    let val = rule.value.to_lowercase();
+    match rule.field.as_str() {
+        "type" => {
+            if rule.op == "is" {
+                it.ext.eq_ignore_ascii_case(&rule.value)
+            } else {
+                it.ext.to_lowercase().contains(&val)
+            }
+        }
+        "tag" => {
+            if rule.op == "is" {
+                tags.iter().any(|t| t.eq_ignore_ascii_case(&rule.value))
+            } else {
+                tags.iter().any(|t| t.to_lowercase().contains(&val))
+            }
+        }
+        _ => {
+            let hay = if it.title.is_empty() {
+                it.name.to_lowercase()
+            } else {
+                it.title.to_lowercase()
+            };
+            if rule.op == "is" {
+                hay == val
+            } else {
+                hay.contains(&val)
+            }
+        }
+    }
+}
+
+/// Evaluate a saved search's rules against every file in the library.
+#[tauri::command]
+fn run_saved_search(library: String, search: SavedSearch) -> Result<Vec<FileItem>, String> {
+    let idx = read_meta_index(&library);
+    let mut all = Vec::new();
+    walk_items(&library, &idx, Path::new(&library), &mut all);
+    let any = search.match_mode == "any";
+    let out: Vec<FileItem> = all
+        .into_iter()
+        .filter(|it| {
+            if search.rules.is_empty() {
+                return true;
+            }
+            let tags = rel_key(&library, &it.path)
+                .and_then(|k| idx.get(&k).map(|m| m.tags.clone()))
+                .unwrap_or_default();
+            if any {
+                search.rules.iter().any(|r| rule_matches(r, it, &tags))
+            } else {
+                search.rules.iter().all(|r| rule_matches(r, it, &tags))
+            }
+        })
+        .collect();
+    Ok(out)
+}
+
 #[derive(Serialize)]
 struct TagCount {
     tag: String,
@@ -1468,6 +1591,10 @@ pub fn run() {
             list_trash,
             restore_trash,
             empty_trash,
+            list_saved_searches,
+            save_saved_search,
+            delete_saved_search,
+            run_saved_search,
             list_all_tags,
             find_by_tag,
             get_highlights,

@@ -23,6 +23,11 @@ import {
   setLibrary,
   TagCount,
   trashItem,
+  SavedSearch,
+  listSavedSearches,
+  saveSavedSearch,
+  deleteSavedSearch,
+  runSavedSearch,
 } from "./api";
 import Tree from "./components/Tree";
 import DocReader from "./components/DocReader";
@@ -33,6 +38,7 @@ import ItemList from "./components/ItemList";
 import TagSelector from "./components/TagSelector";
 import BibliographyButton from "./components/BibliographyButton";
 import TrashView from "./components/TrashView";
+import SavedSearchModal from "./components/SavedSearchModal";
 import PromptModal, { PromptState } from "./components/PromptModal";
 import { ALL_TYPES, COMMON_TYPES } from "./itemTypes";
 import "./App.css";
@@ -91,6 +97,10 @@ export default function App() {
   // Special virtual views ("All Items" / "Recently Added") override the folder view.
   const [specialView, setSpecialView] = useState<"all" | "recent" | "trash" | null>(null);
   const [libItems, setLibItems] = useState<FileItem[] | null>(null);
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
+  const [activeSearch, setActiveSearch] = useState<SavedSearch | null>(null);
+  const [searchItems, setSearchItems] = useState<FileItem[] | null>(null);
+  const [searchModal, setSearchModal] = useState<{ initial: SavedSearch | null } | null>(null);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [tagResults, setTagResults] = useState<Entry[]>([]);
@@ -216,6 +226,7 @@ export default function App() {
     setCurrentFolder(entry.path);
     setActivePath(null);
     setSpecialView(null);
+    setActiveSearch(null);
     setQuery("");
     setTagFilter(null);
   };
@@ -223,6 +234,7 @@ export default function App() {
   // Open a special virtual view (All Items / Recently Added / Trash).
   const openSpecial = (v: "all" | "recent" | "trash") => {
     setSpecialView(v);
+    setActiveSearch(null);
     setActivePath(null);
     setQuery("");
     setTagFilter(null);
@@ -230,7 +242,17 @@ export default function App() {
 
   const goLibraryRoot = () => {
     setSpecialView(null);
+    setActiveSearch(null);
     setCurrentFolder(library);
+    setActivePath(null);
+    setQuery("");
+    setTagFilter(null);
+  };
+
+  // Open a saved search → show its matches in the home item list.
+  const openSavedSearch = (s: SavedSearch) => {
+    setActiveSearch(s);
+    setSpecialView(null);
     setActivePath(null);
     setQuery("");
     setTagFilter(null);
@@ -245,12 +267,52 @@ export default function App() {
     libraryItems(library).then(setLibItems).catch(() => setLibItems([]));
   }, [library, specialView, version, metaVersion]);
 
+  // Load the saved-search list.
+  useEffect(() => {
+    if (!library) return;
+    listSavedSearches(library).then(setSavedSearches).catch(() => setSavedSearches([]));
+  }, [library, version]);
+
+  // Run the active saved search (and re-run when the library changes).
+  useEffect(() => {
+    if (!library || !activeSearch) {
+      setSearchItems(null);
+      return;
+    }
+    runSavedSearch(library, activeSearch).then(setSearchItems).catch(() => setSearchItems([]));
+  }, [library, activeSearch, version, metaVersion]);
+
+  const persistSearch = async (s: SavedSearch) => {
+    if (!library) return;
+    try {
+      const list = await saveSavedSearch(library, s);
+      setSavedSearches(list);
+      if (activeSearch?.id === s.id) setActiveSearch(s);
+      setSearchModal(null);
+    } catch (e) {
+      await confirm(String(e), { title: "Couldn’t save search", kind: "error" });
+    }
+  };
+
+  const removeSearch = async (id: string) => {
+    if (!library) return;
+    const list = await deleteSavedSearch(library, id);
+    setSavedSearches(list);
+    if (activeSearch?.id === id) {
+      setActiveSearch(null);
+      goLibraryRoot();
+    }
+  };
+
   const specialItems =
     specialView === "recent"
       ? [...(libItems ?? [])].sort((a, b) => b.modified_ms - a.modified_ms).slice(0, 50)
       : specialView === "all"
         ? (libItems ?? [])
         : null;
+
+  // What the center item list shows: a saved search wins, else a special view.
+  const overrideItems = activeSearch ? (searchItems ?? []) : specialItems;
 
   // Drag the sidebar's right edge to resize; drag it narrow to collapse it.
   // Pointer capture guarantees we still get the release even if the cursor
@@ -695,6 +757,43 @@ export default function App() {
               <span className="special-icon">🗑</span> Trash
             </button>
           </div>
+          <div className="saved-searches">
+            <div className="saved-head">
+              <span>Saved Searches</span>
+              <button
+                className="saved-add"
+                title="New saved search"
+                onClick={() => setSearchModal({ initial: null })}
+              >
+                +
+              </button>
+            </div>
+            {savedSearches.map((s) => (
+              <div
+                key={s.id}
+                className={`special-row saved-row${activeSearch?.id === s.id ? " active" : ""}`}
+                onClick={() => openSavedSearch(s)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setSearchModal({ initial: s });
+                }}
+                title="Click to run · right-click to edit"
+              >
+                <span className="special-icon">🔍</span>
+                <span className="saved-name">{s.name}</span>
+                <button
+                  className="saved-x"
+                  title="Delete saved search"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeSearch(s.id);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
           <div className="sidebar-scroll">
             {tagFilter ? (
               <div className="search-results">
@@ -754,13 +853,15 @@ export default function App() {
             <div className="home">
               <div className="list-toolbar">
                 <span className="list-folder">
-                  {specialView === "all"
-                    ? "All Items"
-                    : specialView === "recent"
-                      ? "Recently Added"
-                      : specialView === "trash"
-                        ? "Trash"
-                        : baseName(currentFolder ?? library)}
+                  {activeSearch
+                    ? `🔍 ${activeSearch.name}`
+                    : specialView === "all"
+                      ? "All Items"
+                      : specialView === "recent"
+                        ? "Recently Added"
+                        : specialView === "trash"
+                          ? "Trash"
+                          : baseName(currentFolder ?? library)}
                 </span>
                 <BibliographyButton library={library} folder={currentFolder ?? library} />
                 <div className="newitem-wrap">
@@ -833,8 +934,14 @@ export default function App() {
                   folder={currentFolder ?? library}
                   version={version}
                   selectedPath={inspected?.path ?? null}
-                  override={specialItems}
-                  emptyText={specialView ? "Nothing here yet." : "This folder has no documents yet."}
+                  override={overrideItems}
+                  emptyText={
+                    activeSearch
+                      ? "No items match this search."
+                      : specialView
+                        ? "Nothing here yet."
+                        : "This folder has no documents yet."
+                  }
                   onSelect={openEntry}
                   onOpen={activateEntry}
                   onContext={(entry, x, y) => setMenu({ entry, x, y })}
@@ -920,6 +1027,14 @@ export default function App() {
       )}
 
       {prompt && <PromptModal state={prompt} onClose={() => setPrompt(null)} />}
+
+      {searchModal && (
+        <SavedSearchModal
+          initial={searchModal.initial}
+          onSave={persistSearch}
+          onClose={() => setSearchModal(null)}
+        />
+      )}
     </div>
   );
 }

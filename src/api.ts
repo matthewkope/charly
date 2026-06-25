@@ -111,6 +111,28 @@ export const listTrash = (library: string) => invoke<TrashEntry[]>("list_trash",
 export const restoreTrash = (library: string, trashName: string) =>
   invoke<string>("restore_trash", { library, trashName });
 export const emptyTrash = (library: string) => invoke<void>("empty_trash", { library });
+
+// ---- Saved searches (rule-based virtual collections) ---------------------
+
+export interface SearchRule {
+  field: "title" | "tag" | "type";
+  op: "contains" | "is";
+  value: string;
+}
+export interface SavedSearch {
+  id: string;
+  name: string;
+  match: "all" | "any";
+  rules: SearchRule[];
+}
+export const listSavedSearches = (library: string) =>
+  invoke<SavedSearch[]>("list_saved_searches", { library });
+export const saveSavedSearch = (library: string, search: SavedSearch) =>
+  invoke<SavedSearch[]>("save_saved_search", { library, search });
+export const deleteSavedSearch = (library: string, id: string) =>
+  invoke<SavedSearch[]>("delete_saved_search", { library, id });
+export const runSavedSearch = (library: string, search: SavedSearch) =>
+  invoke<FileItem[]>("run_saved_search", { library, search });
 export const listAllTags = (library: string) =>
   invoke<TagCount[]>("list_all_tags", { library });
 export const findByTag = (library: string, tag: string) =>

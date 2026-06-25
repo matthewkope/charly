@@ -218,6 +218,135 @@ button.ghost {
   font-size: 13px;
 }
 
+/* Saved searches (rule-based virtual collections). */
+.saved-searches {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 6px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.saved-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.saved-add {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 5px;
+}
+.saved-add:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.saved-row .saved-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.saved-x {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 4px;
+  opacity: 0;
+}
+.saved-row:hover .saved-x {
+  opacity: 1;
+}
+.saved-x:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--danger);
+}
+
+/* Saved-search builder modal */
+.search-modal {
+  width: 440px;
+}
+.search-name {
+  width: 100%;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  margin-bottom: 12px;
+}
+.search-match {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.search-match select {
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.search-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.search-rule {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.search-rule select {
+  font: inherit;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+.search-rule input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+.rule-x {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.rule-x:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.rule-add {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  padding: 4px 2px;
+  cursor: pointer;
+}
+
 /* ---- Trash view ---- */
 .trash-toolbar {
   display: flex;
