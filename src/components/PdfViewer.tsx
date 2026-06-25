@@ -50,7 +50,6 @@ export default function PdfViewer({
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [highlights, setHighlights] = useState<Highlight[]>([]);
-  const [color, setColor] = useState(COLORS[0].value);
   const [fab, setFab] = useState<{ x: number; y: number } | null>(null);
   const [editing, setEditing] = useState<{ id: string; x: number; y: number } | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -289,14 +288,14 @@ export default function PdfViewer({
         made.push({
           id: `${Date.now()}-${page}-${Math.round(Math.random() * 1e6)}`,
           page,
-          color,
+          color: "",
           text,
           note: "",
           rects: r,
         });
       });
       pendingRef.current = made;
-      if (last) setFab({ x: last.right, y: last.bottom });
+      if (last) setFab({ x: last.left + last.width / 2, y: last.bottom });
     };
 
     const onScroll = () => {
@@ -311,19 +310,17 @@ export default function PdfViewer({
       el.removeEventListener("mouseup", onMouseUp);
       el.removeEventListener("scroll", onScroll);
     };
-  }, [color]);
+  }, []);
 
-  const confirmHighlight = () => {
+  // Pick a color from the floating palette → create the highlight(s).
+  const createHighlight = (colorValue: string) => {
     const made = pendingRef.current;
     if (!made) return;
-    const pos = fab;
-    persist([...highlightsRef.current, ...made]);
+    const colored = made.map((h) => ({ ...h, color: colorValue }));
+    persist([...highlightsRef.current, ...colored]);
     window.getSelection()?.removeAllRanges();
     setFab(null);
     pendingRef.current = null;
-    // Immediately offer a note for the new highlight, like Kindle.
-    const last = made[made.length - 1];
-    if (pos) setEditing({ id: last.id, x: pos.x, y: pos.y });
   };
 
   return (
@@ -357,17 +354,6 @@ export default function PdfViewer({
         <button onClick={() => setScale((s) => Math.max(0.5, +(s - 0.2).toFixed(2)))}>−</button>
         <span className="zoom-label">{Math.round(scale * 100)}%</span>
         <button onClick={() => setScale((s) => Math.min(3, +(s + 0.2).toFixed(2)))}>+</button>
-        <span className="tool-sep" />
-        <span className="hl-label">Highlight</span>
-        {COLORS.map((c) => (
-          <button
-            key={c.value}
-            className={`swatch${color === c.value ? " active" : ""}`}
-            style={{ background: c.value }}
-            title={c.name}
-            onClick={() => setColor(c.value)}
-          />
-        ))}
         <div className="page-finder">
           <button
             className="page-btn"
@@ -403,14 +389,21 @@ export default function PdfViewer({
       {status === "error" && <div className="viewer-msg error">Couldn’t open PDF: {error}</div>}
       <div ref={containerRef} className="pdf-pages" />
       {fab && (
-        <button
-          className="hl-fab"
-          style={{ left: fab.x + 4, top: fab.y + 6 }}
+        <div
+          className="hl-palette"
+          style={{ left: fab.x, top: fab.y + 10 }}
           onMouseDown={(e) => e.preventDefault()}
-          onClick={confirmHighlight}
         >
-          🖍 Highlight
-        </button>
+          {COLORS.map((c) => (
+            <button
+              key={c.value}
+              className="hl-swatch"
+              style={{ background: c.value }}
+              title={`Highlight ${c.name}`}
+              onClick={() => createHighlight(c.value)}
+            />
+          ))}
+        </div>
       )}
       {editing &&
         (() => {

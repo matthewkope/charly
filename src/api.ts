@@ -94,6 +94,23 @@ export interface FileItem {
 
 export const listItems = (library: string, folder: string) =>
   invoke<FileItem[]>("list_items", { library, folder });
+/** Every file in the library (recursive) — for "All Items"/"Recently Added". */
+export const libraryItems = (library: string) =>
+  invoke<FileItem[]>("library_items", { library });
+
+/** A trashed item recorded in the library's .charly/Trash. */
+export interface TrashEntry {
+  name: string;
+  trash_name: string;
+  origin: string;
+  deleted_ms: number;
+}
+export const trashItem = (library: string, path: string) =>
+  invoke<void>("trash_item", { library, path });
+export const listTrash = (library: string) => invoke<TrashEntry[]>("list_trash", { library });
+export const restoreTrash = (library: string, trashName: string) =>
+  invoke<string>("restore_trash", { library, trashName });
+export const emptyTrash = (library: string) => invoke<void>("empty_trash", { library });
 export const listAllTags = (library: string) =>
   invoke<TagCount[]>("list_all_tags", { library });
 export const findByTag = (library: string, tag: string) =>

@@ -412,8 +412,51 @@ struct FileItem {
     size: u64,
 }
 
-/// List the files in a folder with their title alias, creator, and modified
-/// time resolved in one call (powers the item-list home view).
+/// Build one list row (title alias, creator, modified time) for a file path.
+fn build_file_item(library: &str, idx: &MetaIndex, p: &Path) -> Option<FileItem> {
+    let name = p.file_name()?.to_string_lossy().to_string();
+    if name.starts_with('.') {
+        return None;
+    }
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let path_s = p.to_string_lossy().to_string();
+    let title = rel_key(library, &path_s)
+        .and_then(|k| idx.get(&k).map(|m| m.title.clone()))
+        .unwrap_or_default();
+    let creator = if ext == "charlylink" {
+        fs::read_to_string(p)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("site").and_then(|x| x.as_str().map(str::to_string)))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let (modified_ms, size) = fs::metadata(p)
+        .map(|md| {
+            let m = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            (m, md.len())
+        })
+        .unwrap_or((0, 0));
+    Some(FileItem {
+        name,
+        path: path_s,
+        ext,
+        title,
+        creator,
+        modified_ms,
+        size,
+    })
+}
+
 #[tauri::command]
 fn list_items(library: String, folder: String) -> Result<Vec<FileItem>, String> {
     let idx = read_meta_index(&library);
@@ -422,52 +465,154 @@ fn list_items(library: String, folder: String) -> Result<Vec<FileItem>, String> 
         .filter_map(|r| r.ok())
         .map(|d| d.path())
         .filter(|p| p.is_file())
-        .filter_map(|p| {
-            let name = p.file_name()?.to_string_lossy().to_string();
-            if name.starts_with('.') {
-                return None;
-            }
-            let ext = p
-                .extension()
-                .map(|e| e.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            let path_s = p.to_string_lossy().to_string();
-            let title = rel_key(&library, &path_s)
-                .and_then(|k| idx.get(&k).map(|m| m.title.clone()))
-                .unwrap_or_default();
-            let creator = if ext == "charlylink" {
-                fs::read_to_string(&p)
-                    .ok()
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                    .and_then(|v| v.get("site").and_then(|x| x.as_str().map(str::to_string)))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-            let (modified_ms, size) = fs::metadata(&p)
-                .map(|md| {
-                    let m = md
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(0);
-                    (m, md.len())
-                })
-                .unwrap_or((0, 0));
-            Some(FileItem {
-                name,
-                path: path_s,
-                ext,
-                title,
-                creator,
-                modified_ms,
-                size,
-            })
-        })
+        .filter_map(|p| build_file_item(&library, &idx, &p))
         .collect();
     items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(items)
+}
+
+fn walk_items(library: &str, idx: &MetaIndex, dir: &Path, out: &mut Vec<FileItem>) {
+    if out.len() >= 5000 {
+        return;
+    }
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for e in rd.filter_map(|r| r.ok()) {
+        let p = e.path();
+        let name = match p.file_name() {
+            Some(n) => n.to_string_lossy().to_string(),
+            None => continue,
+        };
+        if name.starts_with('.') {
+            continue; // skip .charly and other hidden dirs/files
+        }
+        if p.is_dir() {
+            walk_items(library, idx, &p, out);
+        } else if let Some(it) = build_file_item(library, idx, &p) {
+            out.push(it);
+        }
+    }
+}
+
+/// Every file in the library (recursively) — powers the "All Items" and
+/// "Recently Added" special views.
+#[tauri::command]
+fn library_items(library: String) -> Result<Vec<FileItem>, String> {
+    let idx = read_meta_index(&library);
+    let mut out = Vec::new();
+    walk_items(&library, &idx, Path::new(&library), &mut out);
+    Ok(out)
+}
+
+// ---- Per-library Trash (move to .charly/Trash, with restore) ---------------
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct TrashEntry {
+    name: String,       // original filename (display)
+    trash_name: String, // unique filename inside .charly/Trash
+    origin: String,     // absolute original path
+    deleted_ms: u64,
+}
+
+fn trash_dir(library: &str) -> PathBuf {
+    Path::new(library).join(".charly").join("Trash")
+}
+fn trash_manifest(library: &str) -> PathBuf {
+    Path::new(library).join(".charly").join("trash.json")
+}
+fn read_trash(library: &str) -> Vec<TrashEntry> {
+    fs::read_to_string(trash_manifest(library))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+fn write_trash(library: &str, list: &[TrashEntry]) -> Result<(), String> {
+    let mp = trash_manifest(library);
+    if let Some(p) = mp.parent() {
+        fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    fs::write(mp, serde_json::to_string_pretty(list).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+/// Move an item into the library's Trash (recoverable via restore_trash).
+#[tauri::command]
+fn trash_item(library: String, path: String) -> Result<(), String> {
+    let src = Path::new(&path);
+    let name = src.file_name().ok_or("Invalid path")?.to_string_lossy().to_string();
+    let dir = trash_dir(&library);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut trash_name = name.clone();
+    if dir.join(&trash_name).exists() {
+        trash_name = format!("{}-{}", now_ms(), name);
+    }
+    fs::rename(src, dir.join(&trash_name)).map_err(|e| e.to_string())?;
+    let mut list = read_trash(&library);
+    list.push(TrashEntry {
+        name,
+        trash_name,
+        origin: path,
+        deleted_ms: now_ms(),
+    });
+    write_trash(&library, &list)
+}
+
+#[tauri::command]
+fn list_trash(library: String) -> Result<Vec<TrashEntry>, String> {
+    let dir = trash_dir(&library);
+    let mut list: Vec<TrashEntry> = read_trash(&library)
+        .into_iter()
+        .filter(|e| dir.join(&e.trash_name).exists())
+        .collect();
+    list.sort_by(|a, b| b.deleted_ms.cmp(&a.deleted_ms));
+    Ok(list)
+}
+
+/// Restore a trashed item to its original location (suffixed if taken).
+#[tauri::command]
+fn restore_trash(library: String, trash_name: String) -> Result<String, String> {
+    let mut list = read_trash(&library);
+    let pos = list
+        .iter()
+        .position(|e| e.trash_name == trash_name)
+        .ok_or("Not found in Trash")?;
+    let entry = list[pos].clone();
+    let src = trash_dir(&library).join(&entry.trash_name);
+    let mut dest = PathBuf::from(&entry.origin);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    if dest.exists() {
+        let stem = dest.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let ext = dest.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+        let parent = dest.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        dest = parent.join(format!("{stem} (restored){ext}"));
+    }
+    fs::rename(&src, &dest).map_err(|e| e.to_string())?;
+    list.remove(pos);
+    write_trash(&library, &list)?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn empty_trash(library: String) -> Result<(), String> {
+    let dir = trash_dir(&library);
+    for entry in read_trash(&library) {
+        let p = dir.join(&entry.trash_name);
+        if p.is_dir() {
+            let _ = fs::remove_dir_all(&p);
+        } else {
+            let _ = fs::remove_file(&p);
+        }
+        remove_meta(&library, &entry.origin);
+    }
+    write_trash(&library, &[])
 }
 
 #[derive(Serialize)]
@@ -1318,6 +1463,11 @@ pub fn run() {
             set_item_title,
             file_info,
             list_items,
+            library_items,
+            trash_item,
+            list_trash,
+            restore_trash,
+            empty_trash,
             list_all_tags,
             find_by_tag,
             get_highlights,

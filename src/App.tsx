@@ -8,10 +8,12 @@ import {
   createItem,
   deleteEntry,
   Entry,
+  FileItem,
   findByTag,
   getLibrary,
   importFiles,
   isSupported,
+  libraryItems,
   listAllTags,
   openCharlyLink,
   pickDocuments,
@@ -20,6 +22,7 @@ import {
   searchLibrary,
   setLibrary,
   TagCount,
+  trashItem,
 } from "./api";
 import Tree from "./components/Tree";
 import DocReader from "./components/DocReader";
@@ -28,6 +31,8 @@ import Inspector from "./components/Inspector";
 import ItemEditor from "./components/ItemEditor";
 import ItemList from "./components/ItemList";
 import TagSelector from "./components/TagSelector";
+import BibliographyButton from "./components/BibliographyButton";
+import TrashView from "./components/TrashView";
 import PromptModal, { PromptState } from "./components/PromptModal";
 import { ALL_TYPES, COMMON_TYPES } from "./itemTypes";
 import "./App.css";
@@ -83,6 +88,9 @@ export default function App() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   // The folder whose contents fill the item-list "home" view (null = library root).
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
+  // Special virtual views ("All Items" / "Recently Added") override the folder view.
+  const [specialView, setSpecialView] = useState<"all" | "recent" | "trash" | null>(null);
+  const [libItems, setLibItems] = useState<FileItem[] | null>(null);
   const [tags, setTags] = useState<TagCount[]>([]);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [tagResults, setTagResults] = useState<Entry[]>([]);
@@ -207,9 +215,42 @@ export default function App() {
   const selectFolder = (entry: Entry) => {
     setCurrentFolder(entry.path);
     setActivePath(null);
+    setSpecialView(null);
     setQuery("");
     setTagFilter(null);
   };
+
+  // Open a special virtual view (All Items / Recently Added / Trash).
+  const openSpecial = (v: "all" | "recent" | "trash") => {
+    setSpecialView(v);
+    setActivePath(null);
+    setQuery("");
+    setTagFilter(null);
+  };
+
+  const goLibraryRoot = () => {
+    setSpecialView(null);
+    setCurrentFolder(library);
+    setActivePath(null);
+    setQuery("");
+    setTagFilter(null);
+  };
+
+  // Load every library file when a special view is active.
+  useEffect(() => {
+    if (!library || specialView === null || specialView === "trash") {
+      setLibItems(null);
+      return;
+    }
+    libraryItems(library).then(setLibItems).catch(() => setLibItems([]));
+  }, [library, specialView, version, metaVersion]);
+
+  const specialItems =
+    specialView === "recent"
+      ? [...(libItems ?? [])].sort((a, b) => b.modified_ms - a.modified_ms).slice(0, 50)
+      : specialView === "all"
+        ? (libItems ?? [])
+        : null;
 
   // Drag the sidebar's right edge to resize; drag it narrow to collapse it.
   // Pointer capture guarantees we still get the release even if the cursor
@@ -401,9 +442,25 @@ export default function App() {
     });
   };
 
+  // Default delete → recoverable library Trash (.charly/Trash).
   const doDelete = async (entry: Entry) => {
-    const ok = await confirm(`Move “${entry.name}” to the Trash?`, {
-      title: "Delete",
+    if (!library) return;
+    const ok = await confirm(`Move “${entry.name}” to Charly’s Trash?`, {
+      title: "Move to Trash",
+      kind: "warning",
+    });
+    if (!ok) return;
+    await trashItem(library, entry.path);
+    closeTab(entry.path);
+    if (inspected?.path === entry.path) setInspected(null);
+    refresh();
+    bumpMeta();
+  };
+
+  // Optional → macOS system Trash (right-click menu).
+  const doSystemDelete = async (entry: Entry) => {
+    const ok = await confirm(`Move “${entry.name}” to the macOS Trash?`, {
+      title: "Delete to system Trash",
       kind: "warning",
     });
     if (!ok) return;
@@ -612,6 +669,32 @@ export default function App() {
               )}
             </div>
           </div>
+          <div className="special-views">
+            <button
+              className={`special-row${specialView === null && !tagFilter && results === null ? " active" : ""}`}
+              onClick={goLibraryRoot}
+            >
+              <span className="special-icon">🏛</span> My Library
+            </button>
+            <button
+              className={`special-row${specialView === "recent" ? " active" : ""}`}
+              onClick={() => openSpecial("recent")}
+            >
+              <span className="special-icon">🕐</span> Recently Added
+            </button>
+            <button
+              className={`special-row${specialView === "all" ? " active" : ""}`}
+              onClick={() => openSpecial("all")}
+            >
+              <span className="special-icon">📚</span> All Items
+            </button>
+            <button
+              className={`special-row${specialView === "trash" ? " active" : ""}`}
+              onClick={() => openSpecial("trash")}
+            >
+              <span className="special-icon">🗑</span> Trash
+            </button>
+          </div>
           <div className="sidebar-scroll">
             {tagFilter ? (
               <div className="search-results">
@@ -665,11 +748,21 @@ export default function App() {
           />
         )}
 
+        <div className="main-col">
         <main className="content">
           {activePath === null && (
             <div className="home">
               <div className="list-toolbar">
-                <span className="list-folder">{baseName(currentFolder ?? library)}</span>
+                <span className="list-folder">
+                  {specialView === "all"
+                    ? "All Items"
+                    : specialView === "recent"
+                      ? "Recently Added"
+                      : specialView === "trash"
+                        ? "Trash"
+                        : baseName(currentFolder ?? library)}
+                </span>
+                <BibliographyButton library={library} folder={currentFolder ?? library} />
                 <div className="newitem-wrap">
                   <button
                     className="icon-btn"
@@ -725,15 +818,28 @@ export default function App() {
                   )}
                 </div>
               </div>
-              <ItemList
-                library={library}
-                folder={currentFolder ?? library}
-                version={version}
-                selectedPath={inspected?.path ?? null}
-                onSelect={openEntry}
-                onOpen={activateEntry}
-                onContext={(entry, x, y) => setMenu({ entry, x, y })}
-              />
+              {specialView === "trash" ? (
+                <TrashView
+                  library={library}
+                  version={version}
+                  onChanged={() => {
+                    refresh();
+                    bumpMeta();
+                  }}
+                />
+              ) : (
+                <ItemList
+                  library={library}
+                  folder={currentFolder ?? library}
+                  version={version}
+                  selectedPath={inspected?.path ?? null}
+                  override={specialItems}
+                  emptyText={specialView ? "Nothing here yet." : "This folder has no documents yet."}
+                  onSelect={openEntry}
+                  onOpen={activateEntry}
+                  onContext={(entry, x, y) => setMenu({ entry, x, y })}
+                />
+              )}
             </div>
           )}
           <div className={`doc-area${activePath ? "" : " hidden"}`}>
@@ -771,6 +877,7 @@ export default function App() {
             onChanged={bumpMeta}
           />
         )}
+        </div>
 
         <aside className="info-rail">
           <button
@@ -808,6 +915,7 @@ export default function App() {
           onInspect={(entry) => setInspected(entry)}
           onRename={askRename}
           onDelete={doDelete}
+          onSystemDelete={doSystemDelete}
         />
       )}
 
@@ -823,6 +931,7 @@ function ContextMenu({
   onInspect,
   onRename,
   onDelete,
+  onSystemDelete,
 }: {
   menu: MenuState;
   onImport: (dir: string) => void;
@@ -830,6 +939,7 @@ function ContextMenu({
   onInspect: (entry: Entry) => void;
   onRename: (entry: Entry) => void;
   onDelete: (entry: Entry) => void;
+  onSystemDelete: (entry: Entry) => void;
 }) {
   const { entry, x, y } = menu;
   return (
@@ -846,6 +956,7 @@ function ContextMenu({
       <button className="danger" onClick={() => onDelete(entry)}>
         Move to Trash
       </button>
+      <button onClick={() => onSystemDelete(entry)}>Delete to macOS Trash…</button>
     </div>
   );
 }

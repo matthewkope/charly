@@ -10,6 +10,9 @@ import {
   saveItem,
 } from "../api";
 import { ALL_TYPES, fieldsFor, FIELD_LABELS } from "../itemTypes";
+import { CitationStyle, exportItems, formatCitation } from "../cite";
+
+const STYLE_LABELS: Record<CitationStyle, string> = { apa: "APA", mla: "MLA", chicago: "Chicago" };
 
 function dirOf(path: string): string {
   return path.slice(0, Math.max(0, path.lastIndexOf("/")));
@@ -31,10 +34,31 @@ export default function ItemEditor({
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [ident, setIdent] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [citeMenu, setCiteMenu] = useState<"cite" | "export" | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     itemRef.current = item;
   }, [item]);
+
+  // Close the cite/export dropdown on any outside click.
+  useEffect(() => {
+    if (!citeMenu) return;
+    const close = () => setCiteMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [citeMenu]);
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      /* clipboard unavailable */
+    }
+    setCiteMenu(null);
+  };
 
   useEffect(() => {
     setStatus("loading");
@@ -117,6 +141,45 @@ export default function ItemEditor({
       <div className="item-head">
         <span className="item-head-icon">📄</span>
         <h2 className="item-head-title">{title}</h2>
+        <div className="item-cite">
+          <div className="cite-wrap">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setCiteMenu((m) => (m === "cite" ? null : "cite"));
+              }}
+            >
+              Cite ▾
+            </button>
+            {citeMenu === "cite" && (
+              <div className="cite-menu" onClick={(e) => e.stopPropagation()}>
+                {(Object.keys(STYLE_LABELS) as CitationStyle[]).map((s) => (
+                  <button key={s} onClick={() => copy(formatCitation(item, s))}>
+                    Copy {STYLE_LABELS[s]} citation
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="cite-wrap">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setCiteMenu((m) => (m === "export" ? null : "export"));
+              }}
+            >
+              Export ▾
+            </button>
+            {citeMenu === "export" && (
+              <div className="cite-menu" onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => copy(exportItems([item], "bibtex"))}>Copy BibTeX</button>
+                <button onClick={() => copy(exportItems([item], "ris"))}>Copy RIS</button>
+                <button onClick={() => copy(exportItems([item], "csljson"))}>Copy CSL-JSON</button>
+              </div>
+            )}
+          </div>
+          {copied && <span className="cite-copied">Copied ✓</span>}
+        </div>
       </div>
 
       <div className="item-identifier">

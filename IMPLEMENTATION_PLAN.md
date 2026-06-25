@@ -10,7 +10,7 @@ Effort tags: **S** (days) · **M** (1–2 weeks) · **L** (weeks) · **XL** (its
 
 ## Two decisions to make first
 
-Everything below hangs on two upfront choices.
+Everything below hangs on two upfront choices. **Both are now decided (see ✅ markers).**
 
 ### Decision 1 — Folder purity vs. a rebuildable index
 
@@ -32,6 +32,11 @@ sync churn/corruption.
 > If you'd rather stay purely folder-based, that's a legitimate differentiator — but it caps
 > collections at single-membership and limits search. The rest of this plan assumes the index.
 
+**✅ Decision: adopt the rebuildable SQLite sidecar index.** Per-item `.charlyitem`/sidecar
+files on disk stay authoritative; the index is a derived cache that regenerates from disk, kept
+outside the synced folder. This keeps the no-lock-in promise while unlocking collections,
+saved searches, dedup, and full-text search.
+
 ### Decision 2 — Relicense to AGPL-3.0
 
 The only practical citation engine is **citeproc-js** (the reference CSL implementation),
@@ -39,6 +44,12 @@ licensed **AGPLv3 / CPAL**. Bundling it into a distributed app triggers AGPL cop
 Charly is currently **MIT**. To ship citations as FOSS, plan to **relicense Charly to
 AGPL-3.0** (what Zotero itself uses) or isolate the engine behind a process boundary. Settle
 this before building Phase 1's citation work.
+
+**✅ Decision: stay MIT for now; defer AGPL.** Charly currently uses **hand-rolled
+APA/MLA/Chicago formatters** (`src/cite.ts`) with no CSL-engine dependency, so no relicense is
+needed. citeproc-js (and the AGPL relicense it forces) is deferred until/unless we want the full
+10,000-style CSL library — at which point relicensing to AGPL-3.0 becomes the action item. This
+keeps the MIT license and avoids copyleft while the approximate styles are sufficient.
 
 ---
 

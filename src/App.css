@@ -186,6 +186,60 @@ button.ghost {
   padding-bottom: 8px;
 }
 
+/* Zotero-style special views above the folder tree. */
+.special-views {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 6px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.special-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.special-row:hover {
+  background: #f0f0f3;
+}
+.special-row.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.special-icon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+/* ---- Trash view ---- */
+.trash-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.trash-hint {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+}
+.trash-toolbar .danger {
+  color: var(--danger);
+  border-color: var(--border);
+}
+.trash-restore {
+  font-size: 12px;
+  padding: 2px 10px;
+}
+
 /* Zotero-style tag selector pinned to the bottom-left. */
 .tag-selector {
   flex-shrink: 0;
@@ -307,12 +361,14 @@ button.ghost {
 }
 .itemlist-head {
   display: flex;
-  align-items: center;
-  padding: 6px 14px;
+  align-items: stretch;
+  height: 30px;
+  padding: 0 4px;
   font-size: 11px;
   font-weight: 600;
   color: var(--muted);
   border-bottom: 1px solid var(--border);
+  user-select: none;
 }
 .itemlist-body {
   flex: 1;
@@ -321,7 +377,8 @@ button.ghost {
 .item-row {
   display: flex;
   align-items: center;
-  padding: 7px 14px;
+  height: 30px;
+  padding: 0 4px;
   font-size: 13px;
   border-bottom: 1px solid #f1f1f3;
   cursor: default;
@@ -333,36 +390,83 @@ button.ghost {
 .item-row.selected {
   background: var(--accent-soft);
 }
-.col-title {
-  flex: 1 1 60%;
-  min-width: 0;
+
+/* Resizable / sortable / pickable columns */
+.col-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
+  padding: 0 10px;
   overflow: hidden;
+  white-space: nowrap;
+  position: relative;
+  flex-shrink: 0;
 }
+.col-cell.num {
+  justify-content: flex-end;
+  color: var(--muted);
+  font-size: 12px;
+}
+.itemlist-head .col-cell {
+  cursor: pointer;
+}
+.itemlist-head .col-cell:hover {
+  color: var(--text);
+}
+.col-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.col-sort {
+  font-size: 8px;
+  color: var(--accent);
+}
+.cell-text,
 .item-title-text {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.col-creator {
-  flex: 0 0 24%;
-  min-width: 0;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding-right: 8px;
-}
-.col-date {
-  flex: 0 0 15%;
-  color: var(--muted);
-  font-size: 12px;
-  text-align: right;
 }
 .item-icon {
   flex-shrink: 0;
+}
+.col-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+}
+.col-picker {
+  position: fixed;
+  z-index: 90;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  padding: 5px;
+  min-width: 150px;
+  display: flex;
+  flex-direction: column;
+}
+.col-picker button {
+  border: none;
+  background: transparent;
+  text-align: left;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.col-picker button:hover {
+  background: var(--accent-soft);
+}
+.col-check {
+  width: 14px;
+  color: var(--accent);
 }
 .itemlist-empty {
   padding: 24px 14px;
@@ -1795,6 +1899,59 @@ button.ghost {
   font-size: 20px;
   font-weight: 600;
   line-height: 1.3;
+  flex: 1;
+  min-width: 0;
+}
+.item-cite {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.cite-wrap {
+  position: relative;
+}
+.cite-wrap > button {
+  font-size: 12.5px;
+  padding: 4px 9px;
+}
+.cite-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 80;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  padding: 5px;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  white-space: nowrap;
+}
+.cite-menu button {
+  border: none;
+  background: transparent;
+  text-align: left;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.cite-menu button:hover {
+  background: var(--accent-soft);
+}
+.cite-copied {
+  font-size: 12px;
+  color: var(--ok, #1a7f4b);
+}
+.cite-folder-btn {
+  width: auto;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  color: var(--text);
 }
 .item-identifier {
   display: flex;
@@ -2042,4 +2199,53 @@ button.ghost {
 }
 .itemlist-body .item-row.selected {
   background: var(--accent-soft);
+}
+
+/* ---- Floating highlight color palette (appears under a selection) ---- */
+.hl-palette {
+  position: fixed;
+  z-index: 200;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 7px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.22);
+}
+.hl-swatch {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  transition: transform 0.08s;
+}
+.hl-swatch:hover {
+  transform: scale(1.1);
+}
+
+/* ---- Content + metadata column (responsive inspector placement) ---- */
+.main-col {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+/* Wide windows: metadata inspector sits to the right of the content. */
+/* Narrow windows: it reflows to the bottom (below the list), Zotero-style. */
+@media (max-width: 920px) {
+  .main-col {
+    flex-direction: column;
+    min-height: 0;
+  }
+  .main-col .inspector {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    max-height: 45%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
 }

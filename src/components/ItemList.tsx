@@ -1,11 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Entry, FileItem, listItems } from "../api";
 
 function icon(ext: string): string {
   if (ext === "pdf") return "📕";
   if (ext === "epub") return "📗";
   if (ext === "charlylink") return "🔗";
+  if (ext === "charlyitem") return "📄";
   return "📄";
+}
+
+function typeLabel(ext: string): string {
+  if (ext === "pdf") return "PDF";
+  if (ext === "epub") return "EPUB";
+  if (ext === "charlylink") return "Link";
+  if (ext === "charlyitem") return "Item";
+  return ext ? ext.toUpperCase() : "File";
 }
 
 function fmtDate(ms: number): string {
@@ -13,12 +22,76 @@ function fmtDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+function fmtSize(bytes: number): string {
+  if (!bytes) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let n = bytes;
+  let u = 0;
+  while (n >= 1024 && u < units.length - 1) {
+    n /= 1024;
+    u += 1;
+  }
+  return `${n.toFixed(n < 10 && u > 0 ? 1 : 0)} ${units[u]}`;
+}
+
 function asEntry(it: FileItem): Entry {
   return { name: it.name, path: it.path, is_dir: false, ext: it.ext };
 }
 
-// Zotero-style center list: the selected folder's files as Title / Creator /
-// Modified rows. Single-click selects (inspect); double-click opens.
+type ColKey = "title" | "type" | "creator" | "modified" | "size";
+
+interface ColumnDef {
+  key: ColKey;
+  label: string;
+  numeric?: boolean;
+  fixed?: boolean; // Title can't be hidden
+  width: number; // default px
+  text: (it: FileItem) => string;
+  sortVal: (it: FileItem) => string | number;
+}
+
+const COLUMNS: ColumnDef[] = [
+  {
+    key: "title",
+    label: "Title",
+    fixed: true,
+    width: 360,
+    text: (it) => it.title || it.name,
+    sortVal: (it) => (it.title || it.name).toLowerCase(),
+  },
+  { key: "type", label: "Type", width: 80, text: (it) => typeLabel(it.ext), sortVal: (it) => it.ext },
+  {
+    key: "creator",
+    label: "Creator",
+    width: 170,
+    text: (it) => it.creator,
+    sortVal: (it) => it.creator.toLowerCase(),
+  },
+  {
+    key: "modified",
+    label: "Modified",
+    numeric: true,
+    width: 120,
+    text: (it) => fmtDate(it.modified_ms),
+    sortVal: (it) => it.modified_ms,
+  },
+  { key: "size", label: "Size", numeric: true, width: 80, text: (it) => fmtSize(it.size), sortVal: (it) => it.size },
+];
+
+const VIS_KEY = "charly.itemcols.visible.v1";
+const WIDTH_KEY = "charly.itemcols.width.v1";
+const SORT_KEY = "charly.itemcols.sort.v1";
+
+function loadJSON<T>(key: string, fallback: T): T {
+  try {
+    const s = localStorage.getItem(key);
+    return s ? (JSON.parse(s) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+// Zotero-style center list with sortable, resizable, and pickable columns.
 export default function ItemList({
   library,
   folder,
@@ -34,7 +107,6 @@ export default function ItemList({
   folder: string;
   version: number;
   selectedPath: string | null;
-  /** When set, render these rows instead of the folder's contents (search/tags). */
   override?: FileItem[] | null;
   emptyText?: string;
   onSelect: (entry: Entry) => void;
@@ -43,6 +115,19 @@ export default function ItemList({
 }) {
   const [loadedItems, setLoadedItems] = useState<FileItem[]>([]);
   const [loaded, setLoaded] = useState(false);
+
+  const [visible, setVisible] = useState<Record<ColKey, boolean>>(() =>
+    loadJSON(VIS_KEY, { title: true, type: false, creator: true, modified: true, size: false }),
+  );
+  const [widths, setWidths] = useState<Record<string, number>>(() => loadJSON(WIDTH_KEY, {}));
+  const [sort, setSort] = useState<{ key: ColKey; dir: 1 | -1 }>(() =>
+    loadJSON(SORT_KEY, { key: "title", dir: 1 }),
+  );
+  const [picker, setPicker] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => localStorage.setItem(VIS_KEY, JSON.stringify(visible)), [visible]);
+  useEffect(() => localStorage.setItem(WIDTH_KEY, JSON.stringify(widths)), [widths]);
+  useEffect(() => localStorage.setItem(SORT_KEY, JSON.stringify(sort)), [sort]);
 
   useEffect(() => {
     if (override) return;
@@ -53,16 +138,86 @@ export default function ItemList({
       .finally(() => setLoaded(true));
   }, [library, folder, version, override]);
 
-  const items = override ?? loadedItems;
+  // Close the column picker on any outside click.
+  useEffect(() => {
+    if (!picker) return;
+    const close = () => setPicker(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [picker]);
+
+  const raw = override ?? loadedItems;
   const isLoaded = override ? true : loaded;
+
+  const items = useMemo(() => {
+    const col = COLUMNS.find((c) => c.key === sort.key) ?? COLUMNS[0];
+    return [...raw].sort((a, b) => {
+      const av = col.sortVal(a);
+      const bv = col.sortVal(b);
+      let cmp: number;
+      if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
+      else cmp = String(av).localeCompare(String(bv));
+      return cmp * sort.dir;
+    });
+  }, [raw, sort]);
+
+  const shownCols = COLUMNS.filter((c) => c.fixed || visible[c.key]);
+  const widthOf = (c: ColumnDef) => widths[c.key] ?? c.width;
+
+  const toggleSort = (key: ColKey) =>
+    setSort((s) => (s.key === key ? { key, dir: (s.dir === 1 ? -1 : 1) as 1 | -1 } : { key, dir: 1 }));
+
+  const startResize = (key: ColKey, startX: number, startW: number, pointerId: number, el: HTMLElement) => {
+    try {
+      el.setPointerCapture(pointerId);
+    } catch {
+      /* ignore */
+    }
+    const onMove = (ev: PointerEvent) => {
+      const w = Math.max(50, Math.round(startW + (ev.clientX - startX)));
+      setWidths((m) => ({ ...m, [key]: w }));
+    };
+    const onUp = () => {
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+    };
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+  };
 
   return (
     <div className="itemlist">
-      <div className="itemlist-head">
-        <span className="col-title">Title</span>
-        <span className="col-creator">Creator</span>
-        <span className="col-date">Modified</span>
+      <div
+        className="itemlist-head"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setPicker({ x: e.clientX, y: e.clientY });
+        }}
+      >
+        {shownCols.map((c) => (
+          <span
+            key={c.key}
+            className={`col-cell col-${c.key}${c.numeric ? " num" : ""}`}
+            style={c.fixed ? { flex: 1, minWidth: 120 } : { width: widthOf(c) }}
+            onClick={() => toggleSort(c.key)}
+            title="Click to sort · right-click for columns"
+          >
+            <span className="col-label">{c.label}</span>
+            {sort.key === c.key && <span className="col-sort">{sort.dir === 1 ? "▲" : "▼"}</span>}
+            {!c.fixed && (
+              <span
+                className="col-resize"
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  startResize(c.key, e.clientX, widthOf(c), e.pointerId, e.currentTarget);
+                }}
+              />
+            )}
+          </span>
+        ))}
       </div>
+
       <div className="itemlist-body">
         {isLoaded && items.length === 0 ? (
           <div className="itemlist-empty">{emptyText}</div>
@@ -77,22 +232,46 @@ export default function ItemList({
                 e.preventDefault();
                 onContext(asEntry(it), e.clientX, e.clientY);
               }}
-              title={
-                it.ext === "charlylink"
-                  ? "Double-click to open in browser"
-                  : "Double-click to open"
-              }
+              title={it.ext === "charlylink" ? "Double-click to open in browser" : "Double-click to open"}
             >
-              <span className="col-title">
-                <span className="item-icon">{icon(it.ext)}</span>
-                <span className="item-title-text">{it.title || it.name}</span>
-              </span>
-              <span className="col-creator">{it.creator}</span>
-              <span className="col-date">{fmtDate(it.modified_ms)}</span>
+              {shownCols.map((c) => (
+                <span
+                  key={c.key}
+                  className={`col-cell col-${c.key}${c.numeric ? " num" : ""}`}
+                  style={c.fixed ? { flex: 1, minWidth: 120 } : { width: widthOf(c) }}
+                >
+                  {c.key === "title" ? (
+                    <>
+                      <span className="item-icon">{icon(it.ext)}</span>
+                      <span className="item-title-text">{c.text(it)}</span>
+                    </>
+                  ) : (
+                    <span className="cell-text">{c.text(it)}</span>
+                  )}
+                </span>
+              ))}
             </div>
           ))
         )}
       </div>
+
+      {picker && (
+        <div
+          className="col-picker"
+          style={{ top: picker.y, left: picker.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {COLUMNS.filter((c) => !c.fixed).map((c) => (
+            <button
+              key={c.key}
+              onClick={() => setVisible((v) => ({ ...v, [c.key]: !v[c.key] }))}
+            >
+              <span className="col-check">{visible[c.key] ? "✓" : ""}</span>
+              {c.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
