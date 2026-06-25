@@ -2,13 +2,16 @@ import { useEffect, useState } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   Entry,
+  FileItem,
   fileInfo,
   getItemMeta,
+  libraryItems,
   openCharlyLink,
   setItemNote,
   setItemTags,
   setItemTitle,
 } from "../api";
+import { addRelation, getRelated, removeRelation } from "../relations";
 import Cover from "./Cover";
 
 function stem(name: string): string {
@@ -39,12 +42,14 @@ export default function Inspector({
   allTags,
   onClose,
   onChanged,
+  onOpenItem,
 }: {
   library: string;
   entry: Entry;
   allTags: string[];
   onClose: () => void;
   onChanged: () => void;
+  onOpenItem?: (path: string, name: string) => void;
 }) {
   const [title, setTitle] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -53,6 +58,14 @@ export default function Inspector({
   const [pages, setPages] = useState<number | null>(null);
   const [info, setInfo] = useState<{ modified_ms: number; size: number } | null>(null);
   const [loaded, setLoaded] = useState(false);
+
+  // Related items: paths from the sidecar store, resolved to library items
+  // for title/name display. `items` is loaded once for both the related-row
+  // labels and the "Add related…" picker.
+  const [related, setRelated] = useState<string[]>([]);
+  const [items, setItems] = useState<FileItem[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [pickFilter, setPickFilter] = useState("");
 
   useEffect(() => {
     setLoaded(false);
@@ -67,6 +80,51 @@ export default function Inspector({
       .finally(() => setLoaded(true));
     fileInfo(entry.path).then(setInfo).catch(() => setInfo(null));
   }, [library, entry.path]);
+
+  useEffect(() => {
+    setPicking(false);
+    setPickFilter("");
+    getRelated(library, entry.path).then(setRelated).catch(() => setRelated([]));
+    libraryItems(library).then(setItems).catch(() => setItems([]));
+  }, [library, entry.path]);
+
+  const refreshRelated = () =>
+    getRelated(library, entry.path).then(setRelated).catch(() => setRelated([]));
+
+  const labelFor = (path: string): string => {
+    const it = items.find((i) => i.path === path);
+    if (it) return it.title || stem(it.name);
+    return stem(path.split("/").pop() ?? path);
+  };
+
+  const addRelated = async (path: string) => {
+    setPicking(false);
+    setPickFilter("");
+    try {
+      await addRelation(library, entry.path, path);
+      await refreshRelated();
+    } catch (e) {
+      await confirm(String(e), { title: "Couldn’t add related item", kind: "error" });
+    }
+  };
+
+  const removeRelated = async (path: string) => {
+    try {
+      await removeRelation(library, entry.path, path);
+      await refreshRelated();
+    } catch (e) {
+      await confirm(String(e), { title: "Couldn’t remove related item", kind: "error" });
+    }
+  };
+
+  // Candidates for the picker: every library item except this one and ones
+  // already related, filtered by the inline search box.
+  const candidates = items.filter((i) => {
+    if (i.path === entry.path || related.includes(i.path)) return false;
+    const q = pickFilter.trim().toLowerCase();
+    if (!q) return true;
+    return (i.title || i.name).toLowerCase().includes(q);
+  });
 
   const persistTitle = async () => {
     try {
@@ -207,6 +265,67 @@ export default function Inspector({
                 <option key={t} value={t} />
               ))}
             </datalist>
+          </div>
+
+          <div className="inspector-section">
+            <div className="inspector-label">Related</div>
+            <div className="chips">
+              {related.map((p) => (
+                <span className="chip" key={p}>
+                  <button
+                    className="chip-link"
+                    onClick={() => onOpenItem?.(p, p.split("/").pop() ?? p)}
+                    title={p}
+                  >
+                    {labelFor(p)}
+                  </button>
+                  <button
+                    className="chip-x"
+                    onClick={() => removeRelated(p)}
+                    aria-label={`Remove ${labelFor(p)}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              {related.length === 0 && <span className="chips-empty">No related items yet</span>}
+            </div>
+            {picking ? (
+              <>
+                <input
+                  className="tag-input"
+                  placeholder="Search items to relate…"
+                  value={pickFilter}
+                  autoFocus
+                  onChange={(e) => setPickFilter(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setPicking(false);
+                      setPickFilter("");
+                    }
+                  }}
+                />
+                <div className="related-picker">
+                  {candidates.slice(0, 50).map((i) => (
+                    <button
+                      key={i.path}
+                      className="related-option"
+                      onClick={() => addRelated(i.path)}
+                      title={i.path}
+                    >
+                      {i.title || stem(i.name)}
+                    </button>
+                  ))}
+                  {candidates.length === 0 && (
+                    <div className="chips-empty">No matching items</div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <button className="related-add" onClick={() => setPicking(true)}>
+                + Add related…
+              </button>
+            )}
           </div>
 
           <div className="inspector-section inspector-note">

@@ -1583,6 +1583,65 @@ button.ghost {
   border-color: var(--accent);
   background: var(--panel);
 }
+/* Related items — clickable chip label + inline picker. */
+.chip-link {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 0;
+  cursor: pointer;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip-link:hover {
+  text-decoration: underline;
+}
+.related-add {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+.related-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.related-picker {
+  margin-top: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.related-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.related-option:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .inspector-note {
   flex: 1;
   display: flex;

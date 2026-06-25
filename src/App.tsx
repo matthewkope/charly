@@ -974,6 +974,7 @@ export default function App() {
             allTags={tags.map((t) => t.tag)}
             onClose={() => setInspectorOpen(false)}
             onChanged={bumpMeta}
+            onOpenItem={openPath}
           />
         )}
         </div>
