@@ -938,6 +938,12 @@ fn save_item(path: String, mut item: Item) -> Result<(), String> {
     write_item(Path::new(&path), &item)
 }
 
+/// Write a UTF-8 text file. Used to save a generated report as standalone HTML.
+#[tauri::command]
+fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    fs::write(&path, contents).map_err(|e| e.to_string())
+}
+
 /// Copy PDFs into the item's folder and attach them to the record.
 #[tauri::command]
 fn attach_to_item(path: String, sources: Vec<String>) -> Result<Item, String> {
@@ -1602,6 +1608,7 @@ pub fn run() {
             create_item,
             get_item,
             save_item,
+            write_text_file,
             attach_to_item,
             fetch_identifier,
         ])

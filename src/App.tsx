@@ -37,6 +37,7 @@ import ItemEditor from "./components/ItemEditor";
 import ItemList from "./components/ItemList";
 import TagSelector from "./components/TagSelector";
 import BibliographyButton from "./components/BibliographyButton";
+import ReportButton from "./components/ReportButton";
 import TrashView from "./components/TrashView";
 import SavedSearchModal from "./components/SavedSearchModal";
 import PromptModal, { PromptState } from "./components/PromptModal";
@@ -864,6 +865,11 @@ export default function App() {
                           : baseName(currentFolder ?? library)}
                 </span>
                 <BibliographyButton library={library} folder={currentFolder ?? library} />
+                <ReportButton
+                  library={library}
+                  folder={currentFolder ?? library}
+                  folderName={baseName(currentFolder ?? library)}
+                />
                 <div className="newitem-wrap">
                   <button
                     className="icon-btn"

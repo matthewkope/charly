@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 
 export interface Entry {
   name: string;
@@ -140,6 +140,22 @@ export const findByTag = (library: string, tag: string) =>
 
 /** Open an external URL in the user's default browser. */
 export const openExternal = (url: string) => openUrl(url);
+
+/** Open a local file in the OS default application (e.g. a saved report). */
+export const openFilePath = (path: string) => openPath(path);
+
+/** Write a UTF-8 text file (e.g. a generated report). */
+export const writeTextFile = (path: string, contents: string) =>
+  invoke<void>("write_text_file", { path, contents });
+
+/** Native "Save As" dialog. Returns the chosen path, or null if cancelled. */
+export async function pickSavePath(defaultName: string): Promise<string | null> {
+  const result = await save({
+    defaultPath: defaultName,
+    filters: [{ name: "HTML", extensions: ["html"] }],
+  });
+  return result ?? null;
+}
 
 /** Local clip server port (mirrors CLIP_PORT in src-tauri/src/lib.rs). */
 const CLIP_PORT = 8765;
