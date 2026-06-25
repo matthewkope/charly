@@ -258,6 +258,32 @@ export interface FetchedItem {
 
 export const createItem = (dir: string, itemType: string, title: string) =>
   invoke<string>("create_item", { dir, itemType, title });
+// ---- RSS/Atom feeds (Zotero-style) ---------------------------------------
+
+/** A subscribed feed, persisted in `<library>/.charly/feeds.json`. */
+export interface Feed {
+  url: string;
+  title: string;
+}
+
+/** A single entry fetched live from a feed (not persisted). */
+export interface FeedItem {
+  title: string;
+  link: string;
+  summary: string;
+  published: string; // RFC3339, or "" if the feed omits a date
+}
+
+export const addFeed = (library: string, url: string) =>
+  invoke<Feed[]>("add_feed", { library, url });
+export const listFeeds = (library: string) => invoke<Feed[]>("list_feeds", { library });
+export const removeFeed = (library: string, url: string) =>
+  invoke<Feed[]>("remove_feed", { library, url });
+export const fetchFeed = (url: string) => invoke<FeedItem[]>("fetch_feed", { url });
+/** Save a feed item into a library folder as a `.charlylink` sidecar. */
+export const saveFeedItem = (library: string, folder: string, url: string, title: string) =>
+  invoke<string>("save_feed_item", { library, folder, url, title });
+
 export const getItem = (path: string) => invoke<Item>("get_item", { path });
 export const saveItem = (path: string, item: Item) => invoke<void>("save_item", { path, item });
 export const attachToItem = (path: string, sources: string[]) =>

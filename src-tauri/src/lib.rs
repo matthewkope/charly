@@ -1401,6 +1401,172 @@ fn list_folders(library: &str) -> FolderList {
     FolderList { library: name, folders }
 }
 
+// ===========================================================================
+// RSS/Atom feeds (Zotero-style) — subscriptions stored in
+// `<library>/.charly/feeds.json`; items are fetched live (not cached) and a
+// saved item is written as a `.charlylink` sidecar, matching the clip format.
+// ===========================================================================
+
+/// A subscribed feed (persisted in feeds.json).
+#[derive(Serialize, Deserialize, Clone)]
+struct Feed {
+    url: String,
+    title: String,
+}
+
+/// One entry parsed out of a live feed fetch.
+#[derive(Serialize)]
+struct FeedItem {
+    title: String,
+    link: String,
+    summary: String,
+    published: String,
+}
+
+fn feeds_manifest(library: &str) -> PathBuf {
+    Path::new(library).join(".charly").join("feeds.json")
+}
+
+fn read_feeds(library: &str) -> Vec<Feed> {
+    fs::read_to_string(feeds_manifest(library))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn write_feeds(library: &str, list: &[Feed]) -> Result<(), String> {
+    let mp = feeds_manifest(library);
+    if let Some(p) = mp.parent() {
+        fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    fs::write(mp, serde_json::to_string_pretty(list).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+/// Fetch + parse a feed URL into a feed-rs model.
+async fn load_feed(url: &str) -> Result<feed_rs::model::Feed, String> {
+    let c = http_client()?;
+    let resp = c.get(url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Couldn’t fetch feed ({})", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    feed_rs::parser::parse(&bytes[..])
+        .map_err(|e| format!("Not a valid RSS/Atom feed: {e}"))
+}
+
+fn feed_title(parsed: &feed_rs::model::Feed, fallback: &str) -> String {
+    parsed
+        .title
+        .as_ref()
+        .map(|t| t.content.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// Subscribe to a feed: validate by fetching/parsing, then persist {url,title}.
+#[tauri::command]
+async fn add_feed(library: String, url: String) -> Result<Vec<Feed>, String> {
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("Enter a feed URL".into());
+    }
+    let parsed = load_feed(&url).await?;
+    let title = feed_title(&parsed, &url);
+    let mut list = read_feeds(&library);
+    if let Some(existing) = list.iter_mut().find(|f| f.url == url) {
+        existing.title = title;
+    } else {
+        list.push(Feed { url, title });
+    }
+    write_feeds(&library, &list)?;
+    Ok(list)
+}
+
+#[tauri::command]
+fn list_feeds(library: String) -> Result<Vec<Feed>, String> {
+    Ok(read_feeds(&library))
+}
+
+#[tauri::command]
+fn remove_feed(library: String, url: String) -> Result<Vec<Feed>, String> {
+    let mut list = read_feeds(&library);
+    list.retain(|f| f.url != url);
+    write_feeds(&library, &list)?;
+    Ok(list)
+}
+
+/// Fetch a feed's current items (not persisted).
+#[tauri::command]
+async fn fetch_feed(url: String) -> Result<Vec<FeedItem>, String> {
+    let parsed = load_feed(&url).await?;
+    let items = parsed
+        .entries
+        .into_iter()
+        .map(|e| {
+            let title = e.title.map(|t| t.content.trim().to_string()).unwrap_or_default();
+            let link = e
+                .links
+                .into_iter()
+                .find(|l| l.rel.as_deref() != Some("self"))
+                .map(|l| l.href)
+                .unwrap_or_default();
+            let summary = e
+                .summary
+                .map(|s| s.content)
+                .or_else(|| e.content.and_then(|c| c.body))
+                .map(|s| strip_html(&s))
+                .unwrap_or_default();
+            let published = e
+                .published
+                .or(e.updated)
+                .map(|d| d.to_rfc3339())
+                .unwrap_or_default();
+            FeedItem { title, link, summary, published }
+        })
+        .collect();
+    Ok(items)
+}
+
+/// Save a feed item into a library folder as a `.charlylink` sidecar.
+#[tauri::command]
+fn save_feed_item(
+    library: String,
+    folder: String,
+    url: String,
+    title: String,
+) -> Result<String, String> {
+    let dir = resolve_folder(&library, &Some(folder))?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let site = reqwest::Url::parse(&url).ok().and_then(|u| host_site(&u));
+    let title = if title.trim().is_empty() { url.clone() } else { title };
+    let meta = LinkMeta {
+        kind: "webpage".into(),
+        url,
+        title,
+        description: None,
+        site,
+        image: None,
+        is_pdf: false,
+    };
+    save_link_file(&dir, &meta)
+}
+
+/// Best-effort strip of HTML tags from a feed summary for plain-text preview.
+fn strip_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 type ClipResponse = tiny_http::Response<std::io::Cursor<Vec<u8>>>;
 
 fn json_response(status: u16, body: String) -> ClipResponse {
@@ -1611,6 +1777,11 @@ pub fn run() {
             write_text_file,
             attach_to_item,
             fetch_identifier,
+            add_feed,
+            list_feeds,
+            remove_feed,
+            fetch_feed,
+            save_feed_item,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

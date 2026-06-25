@@ -39,6 +39,7 @@ import TagSelector from "./components/TagSelector";
 import BibliographyButton from "./components/BibliographyButton";
 import ReportButton from "./components/ReportButton";
 import TrashView from "./components/TrashView";
+import FeedView from "./components/FeedView";
 import SavedSearchModal from "./components/SavedSearchModal";
 import PromptModal, { PromptState } from "./components/PromptModal";
 import { ALL_TYPES, COMMON_TYPES } from "./itemTypes";
@@ -97,7 +98,9 @@ export default function App() {
   // The folder whose contents fill the item-list "home" view (null = library root).
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   // Special virtual views ("All Items" / "Recently Added") override the folder view.
-  const [specialView, setSpecialView] = useState<"all" | "recent" | "trash" | null>(null);
+  const [specialView, setSpecialView] = useState<"all" | "recent" | "trash" | "feeds" | null>(
+    null,
+  );
   const [libItems, setLibItems] = useState<FileItem[] | null>(null);
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
   const [activeSearch, setActiveSearch] = useState<SavedSearch | null>(null);
@@ -234,7 +237,7 @@ export default function App() {
   };
 
   // Open a special virtual view (All Items / Recently Added / Trash).
-  const openSpecial = (v: "all" | "recent" | "trash") => {
+  const openSpecial = (v: "all" | "recent" | "trash" | "feeds") => {
     setSpecialView(v);
     setActiveSearch(null);
     setActivePath(null);
@@ -262,7 +265,7 @@ export default function App() {
 
   // Load every library file when a special view is active.
   useEffect(() => {
-    if (!library || specialView === null || specialView === "trash") {
+    if (!library || specialView === null || specialView === "trash" || specialView === "feeds") {
       setLibItems(null);
       return;
     }
@@ -738,6 +741,12 @@ export default function App() {
               <span className="special-icon">📚</span> All Items
             </button>
             <button
+              className={`special-row${specialView === "feeds" ? " active" : ""}`}
+              onClick={() => openSpecial("feeds")}
+            >
+              <span className="special-icon">📡</span> Feeds
+            </button>
+            <button
               className={`special-row${specialView === "trash" ? " active" : ""}`}
               onClick={() => openSpecial("trash")}
             >
@@ -848,7 +857,9 @@ export default function App() {
                         ? "Recently Added"
                         : specialView === "trash"
                           ? "Trash"
-                          : baseName(currentFolder ?? library)}
+                          : specialView === "feeds"
+                            ? "Feeds"
+                            : baseName(currentFolder ?? library)}
                 </span>
                 <BibliographyButton library={library} folder={currentFolder ?? library} />
                 <ReportButton
@@ -911,7 +922,20 @@ export default function App() {
                   )}
                 </div>
               </div>
-              {specialView === "trash" ? (
+              {specialView === "feeds" ? (
+                <FeedView
+                  library={library}
+                  folder={
+                    currentFolder && currentFolder !== library
+                      ? currentFolder.slice(library.length).replace(/^[/\\]+/, "")
+                      : ""
+                  }
+                  onChanged={() => {
+                    refresh();
+                    bumpMeta();
+                  }}
+                />
+              ) : specialView === "trash" ? (
                 <TrashView
                   library={library}
                   version={version}
