@@ -31,3 +31,36 @@ export function setReadingPage(path: string, page: number): void {
     /* storage full / unavailable — ignore */
   }
 }
+
+// EPUBs don't have stable page numbers; epub.js identifies a location with a
+// CFI string. Stored separately from the page map (different value type).
+const EPUB_KEY = "charly.reading.epub.v1";
+
+type LocMap = Record<string, string>;
+
+function loadLoc(): LocMap {
+  try {
+    return JSON.parse(localStorage.getItem(EPUB_KEY) || "{}") as LocMap;
+  } catch {
+    return {};
+  }
+}
+
+/** Saved EPUB CFI for a document, or null if none/invalid. */
+export function getReadingLoc(path: string): string | null {
+  const c = loadLoc()[path];
+  return typeof c === "string" && c.length > 0 ? c : null;
+}
+
+/** Record the last-read EPUB CFI for a document. */
+export function setReadingLoc(path: string, cfi: string): void {
+  if (!path || !cfi) return;
+  const m = loadLoc();
+  if (m[path] === cfi) return;
+  m[path] = cfi;
+  try {
+    localStorage.setItem(EPUB_KEY, JSON.stringify(m));
+  } catch {
+    /* storage full / unavailable — ignore */
+  }
+}

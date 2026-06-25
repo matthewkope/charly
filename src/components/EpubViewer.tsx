@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 // epub.js ships its own types but the default export typing is loose.
 import ePub, { type Rendition } from "epubjs";
 import { readFileBytes } from "../api";
+import { getReadingLoc, setReadingLoc } from "../readingState";
 
 export default function EpubViewer({ path }: { path: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -27,7 +28,16 @@ export default function EpubViewer({ path }: { path: string }) {
           spread: "auto",
         });
         renditionRef.current = rendition;
-        await rendition.display();
+
+        // Persist reading position as the user moves through the book.
+        rendition.on("relocated", (location: { start?: { cfi?: string } }) => {
+          const cfi = location?.start?.cfi;
+          if (cfi) setReadingLoc(path, cfi);
+        });
+
+        // Restore where the user left off (or start from the beginning).
+        const savedCfi = getReadingLoc(path);
+        await rendition.display(savedCfi || undefined);
         if (!cancelled) setStatus("ready");
       } catch (e) {
         if (!cancelled) {
