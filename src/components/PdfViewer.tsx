@@ -3,6 +3,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { getHighlights, Highlight, HlRect, readFileBytes, saveHighlights } from "../api";
+import { getReadingPage, setReadingPage } from "../readingState";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -45,6 +46,8 @@ export default function PdfViewer({
   const pagesRef = useRef<PageRef[]>([]);
   const highlightsRef = useRef<Highlight[]>([]);
   const pendingRef = useRef<Highlight[] | null>(null);
+  // Whether we've restored the saved reading position for the current render.
+  const restoredRef = useRef(false);
 
   const [scale, setScale] = useState(1.2);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -89,6 +92,30 @@ export default function PdfViewer({
 
   // Reflect the current page in the input (unless the user is mid-edit).
   useEffect(() => setPageField(String(curPage)), [curPage]);
+
+  // --- Reading state: remember + restore the last-read page per document ---
+  // A (re)render resets scroll to the top, so re-restore after path/scale change.
+  useEffect(() => {
+    restoredRef.current = false;
+  }, [path, scale]);
+
+  // Once the document is rendered, jump to the saved page (if any).
+  useEffect(() => {
+    if (status !== "ready" || restoredRef.current) return;
+    const saved = getReadingPage(path);
+    if (saved && saved > 1) {
+      pagesRef.current.find((p) => p.num === saved)?.wrap.scrollIntoView({ block: "start" });
+    }
+    restoredRef.current = true;
+  }, [status, path, scale]);
+
+  // Persist the current page as the user reads (debounced; only after restore so
+  // the initial page-1 transient never overwrites a real saved position).
+  useEffect(() => {
+    if (status !== "ready" || !restoredRef.current) return;
+    const id = window.setTimeout(() => setReadingPage(path, curPage), 400);
+    return () => window.clearTimeout(id);
+  }, [curPage, path, status]);
 
   const goToPage = (n: number) => {
     if (!Number.isFinite(n)) {
