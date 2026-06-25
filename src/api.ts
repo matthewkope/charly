@@ -194,6 +194,7 @@ export interface CharlyLink {
   description?: string;
   kind?: string; // "webpage" | "youtube"
   image?: string; // remote cover/thumbnail URL
+  snapshot?: string; // readable HTML snapshot (web pages only)
 }
 
 /** Read and parse a `.charlylink` sidecar file. */

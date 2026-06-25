@@ -1113,6 +1113,67 @@ struct LinkMeta {
     site: Option<String>,
     image: Option<String>,
     is_pdf: bool,
+    /// A readable HTML snapshot of the page (web pages only), for in-app reading.
+    snapshot: Option<String>,
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Extract a clean, readable HTML snapshot (headings, paragraphs, lists) from a
+/// page so it can be read offline inside Charly — like Zotero's snapshot.
+fn extract_snapshot(html: &str, title: &str) -> Option<String> {
+    let doc = Html::parse_document(html);
+    let root = ["article", "main", "body"].iter().find_map(|s| {
+        let sel = Selector::parse(s).ok()?;
+        doc.select(&sel).next()
+    })?;
+    let content = Selector::parse("h1, h2, h3, h4, p, li, blockquote, pre").ok()?;
+    let mut out = String::new();
+    if !title.trim().is_empty() {
+        out.push_str(&format!("<h1>{}</h1>\n", html_escape(title)));
+    }
+    for el in root.select(&content) {
+        // Skip site chrome (menus, language lists, footers, sidebars).
+        if el.ancestors().any(|a| {
+            a.value()
+                .as_element()
+                .map(|e| matches!(e.name(), "nav" | "header" | "footer" | "aside"))
+                .unwrap_or(false)
+        }) {
+            continue;
+        }
+        let text: String = el
+            .text()
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if text.trim().is_empty() {
+            continue;
+        }
+        let safe = html_escape(&text);
+        let tag = el.value().name();
+        match tag {
+            "h1" | "h2" | "h3" | "h4" => out.push_str(&format!("<h2>{safe}</h2>\n")),
+            "li" => out.push_str(&format!("<li>{safe}</li>\n")),
+            "blockquote" => out.push_str(&format!("<blockquote>{safe}</blockquote>\n")),
+            "pre" => out.push_str(&format!("<pre>{safe}</pre>\n")),
+            _ => out.push_str(&format!("<p>{safe}</p>\n")),
+        }
+        if out.len() > 400_000 {
+            break;
+        }
+    }
+    // Require a little real content, else treat as no usable snapshot.
+    if out.len() < 120 {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 fn http_client() -> Result<reqwest::Client, String> {
@@ -1166,6 +1227,7 @@ fn parse_og(html: &str, base: &reqwest::Url) -> LinkMeta {
         site,
         image,
         is_pdf: false,
+        snapshot: None,
     }
 }
 
@@ -1194,10 +1256,13 @@ async fn fetch_webpage(url: &str) -> Result<LinkMeta, String> {
             site: host_site(&final_url),
             image: None,
             is_pdf: true,
+            snapshot: None,
         });
     }
     let body = resp.text().await.map_err(|e| e.to_string())?;
-    Ok(parse_og(&body, &final_url))
+    let mut meta = parse_og(&body, &final_url);
+    meta.snapshot = extract_snapshot(&body, &meta.title);
+    Ok(meta)
 }
 
 #[derive(Deserialize)]
@@ -1228,6 +1293,7 @@ async fn fetch_youtube(url: &str) -> Result<LinkMeta, String> {
         site: o.author_name.or_else(|| Some("YouTube".into())),
         image: o.thumbnail_url,
         is_pdf: false,
+        snapshot: None,
     })
 }
 
@@ -1336,6 +1402,7 @@ fn save_link_file(dir: &Path, meta: &LinkMeta) -> Result<String, String> {
         "description": meta.description,
         "kind": meta.kind,
         "image": meta.image,
+        "snapshot": meta.snapshot,
     });
     fs::write(&dest, serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
@@ -1548,6 +1615,7 @@ fn save_feed_item(
         site,
         image: None,
         is_pdf: false,
+        snapshot: None,
     };
     save_link_file(&dir, &meta)
 }

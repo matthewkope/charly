@@ -16,6 +16,7 @@ import {
   libraryItems,
   listAllTags,
   openCharlyLink,
+  readCharlyLink,
   pickDocuments,
   pickFolder,
   renameEntry,
@@ -41,6 +42,7 @@ import ReportButton from "./components/ReportButton";
 import TrashView from "./components/TrashView";
 import FeedView from "./components/FeedView";
 import SavedSearchModal from "./components/SavedSearchModal";
+import SnapshotViewer from "./components/SnapshotViewer";
 import PromptModal, { PromptState } from "./components/PromptModal";
 import { ALL_TYPES, COMMON_TYPES } from "./itemTypes";
 import { retrievePdfMetadata } from "./pdfMeta";
@@ -220,12 +222,6 @@ export default function App() {
     }
   };
 
-  // Item-list single click: just select + inspect (no tab); double-click opens.
-  const selectItem = (entry: Entry) => {
-    setInspected(entry);
-    setInspectorOpen(true);
-  };
-
   // Select a folder in the tree → show its contents in the home item list.
   const selectFolder = (entry: Entry) => {
     setCurrentFolder(entry.path);
@@ -375,14 +371,27 @@ export default function App() {
     openEntry({ name, path: p, is_dir: false, ext });
   };
 
-  // Double click / explicit activation: open a link in the browser.
-  const activateEntry = (entry: Entry) => {
+  // Double click / explicit activation. A clipped web page with a saved
+  // snapshot opens in a Charly reader tab; YouTube/other links open in the
+  // browser; documents open in a tab.
+  const activateEntry = async (entry: Entry) => {
     if (entry.is_dir) return;
     if (entry.ext === "charlylink") {
+      try {
+        const data = await readCharlyLink(entry.path);
+        if (data.snapshot) {
+          setTabs((prev) => (prev.some((t) => t.path === entry.path) ? prev : [...prev, entry]));
+          setActivePath(entry.path);
+          setInspected(entry);
+          return;
+        }
+      } catch {
+        /* fall through to opening the original */
+      }
       openCharlyLink(entry.path).catch(() => {});
-    } else {
-      openEntry(entry);
+      return;
     }
+    openEntry(entry);
   };
 
   const focusTab = (entry: Entry) => {
@@ -818,7 +827,7 @@ export default function App() {
                 version={version}
                 selectedPath={inspected?.path ?? activePath}
                 selectedFolder={currentFolder ?? library}
-                onSelect={selectItem}
+                onSelect={openEntry}
                 onSelectFolder={selectFolder}
                 onActivate={activateEntry}
                 onContext={(entry, x, y) => setMenu({ entry, x, y })}
@@ -973,6 +982,8 @@ export default function App() {
                     <DocReader path={t.path} active={t.path === activePath} library={library} />
                   ) : t.ext === "charlyitem" ? (
                     <ItemEditor path={t.path} library={library} onOpenPath={openPath} />
+                  ) : t.ext === "charlylink" ? (
+                    <SnapshotViewer path={t.path} />
                   ) : (
                     <EpubViewer path={t.path} />
                   )}
