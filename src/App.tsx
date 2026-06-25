@@ -27,6 +27,7 @@ import EpubViewer from "./components/EpubViewer";
 import Inspector from "./components/Inspector";
 import ItemEditor from "./components/ItemEditor";
 import ItemList from "./components/ItemList";
+import TagSelector from "./components/TagSelector";
 import PromptModal, { PromptState } from "./components/PromptModal";
 import { ALL_TYPES, COMMON_TYPES } from "./itemTypes";
 import "./App.css";
@@ -532,7 +533,7 @@ export default function App() {
       </header>
 
       <div className="body">
-        {sidebarCollapsed && (
+        {activePath === null && sidebarCollapsed && (
           <button
             className="sidebar-reopen"
             onClick={() => setSidebarCollapsed(false)}
@@ -542,7 +543,7 @@ export default function App() {
             ›
           </button>
         )}
-        {!sidebarCollapsed && (
+        {activePath === null && !sidebarCollapsed && (
         <aside
           className="sidebar"
           style={{ width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth }}
@@ -611,56 +612,49 @@ export default function App() {
               )}
             </div>
           </div>
-          {tags.length > 0 && (
-            <div className="tagbar">
-              {tags.map((t) => (
-                <button
-                  key={t.tag}
-                  className={`tag-pill${tagFilter === t.tag ? " active" : ""}`}
-                  onClick={() => setTagFilter(tagFilter === t.tag ? null : t.tag)}
-                >
-                  {t.tag} <span className="tag-count">{t.count}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {tagFilter ? (
-            <div className="search-results">
-              <div className="search-head filter-head">
-                🏷 {tagFilter}
-                <button className="clear-filter" onClick={() => setTagFilter(null)}>
-                  ×
-                </button>
+          <div className="sidebar-scroll">
+            {tagFilter ? (
+              <div className="search-results">
+                <div className="search-head filter-head">
+                  🏷 {tagFilter}
+                  <button className="clear-filter" onClick={() => setTagFilter(null)}>
+                    ×
+                  </button>
+                </div>
+                {tagResults.length === 0 ? (
+                  <div className="tree-empty">Nothing tagged “{tagFilter}”.</div>
+                ) : (
+                  tagResults.map(renderRow)
+                )}
               </div>
-              {tagResults.length === 0 ? (
-                <div className="tree-empty">Nothing tagged “{tagFilter}”.</div>
-              ) : (
-                tagResults.map(renderRow)
-              )}
-            </div>
-          ) : results !== null ? (
-            <div className="search-results">
-              <div className="search-head">
-                {results.length} result{results.length === 1 ? "" : "s"}
+            ) : results !== null ? (
+              <div className="search-results">
+                <div className="search-head">
+                  {results.length} result{results.length === 1 ? "" : "s"}
+                </div>
+                {results.map(renderRow)}
               </div>
-              {results.map(renderRow)}
-            </div>
-          ) : (
-            <Tree
-              root={library}
-              version={version}
-              selectedPath={inspected?.path ?? activePath}
-              selectedFolder={currentFolder ?? library}
-              onSelect={selectItem}
-              onSelectFolder={selectFolder}
-              onActivate={activateEntry}
-              onContext={(entry, x, y) => setMenu({ entry, x, y })}
-            />
-          )}
+            ) : (
+              <Tree
+                root={library}
+                version={version}
+                selectedPath={inspected?.path ?? activePath}
+                selectedFolder={currentFolder ?? library}
+                onSelect={selectItem}
+                onSelectFolder={selectFolder}
+                onActivate={activateEntry}
+                onContext={(entry, x, y) => setMenu({ entry, x, y })}
+              />
+            )}
+          </div>
+          <TagSelector
+            tags={tags}
+            active={tagFilter}
+            onToggle={(t) => setTagFilter((cur) => (cur === t ? null : t))}
+          />
         </aside>
         )}
-        {!sidebarCollapsed && (
+        {activePath === null && !sidebarCollapsed && (
           <div
             className="sidebar-resizer"
             onPointerDown={(e) => {
@@ -736,7 +730,7 @@ export default function App() {
                 folder={currentFolder ?? library}
                 version={version}
                 selectedPath={inspected?.path ?? null}
-                onSelect={selectItem}
+                onSelect={openEntry}
                 onOpen={activateEntry}
                 onContext={(entry, x, y) => setMenu({ entry, x, y })}
               />
