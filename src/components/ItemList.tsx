@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Entry, FileItem, listItems } from "../api";
+import CoverThumb from "./CoverThumb";
 
 function icon(ext: string): string {
   if (ext === "pdf") return "📕";
@@ -251,7 +252,11 @@ export default function ItemList({
                 >
                   {c.key === "title" ? (
                     <>
-                      <span className="item-icon">{icon(it.ext)}</span>
+                      {it.ext === "pdf" ? (
+                        <CoverThumb path={it.path} fallback={icon(it.ext)} />
+                      ) : (
+                        <span className="item-icon">{icon(it.ext)}</span>
+                      )}
                       <span className="item-title-text">{c.text(it)}</span>
                     </>
                   ) : (

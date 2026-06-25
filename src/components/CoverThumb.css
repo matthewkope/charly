@@ -1,0 +1,10 @@
+.item-cover {
+  height: 24px;
+  width: auto;
+  max-width: 24px;
+  object-fit: cover;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  vertical-align: middle;
+  flex: 0 0 auto;
+}
