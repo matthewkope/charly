@@ -42,6 +42,7 @@ import TrashView from "./components/TrashView";
 import SavedSearchModal from "./components/SavedSearchModal";
 import PromptModal, { PromptState } from "./components/PromptModal";
 import { ALL_TYPES, COMMON_TYPES } from "./itemTypes";
+import { retrievePdfMetadata } from "./pdfMeta";
 import "./App.css";
 
 interface MenuState {
@@ -452,7 +453,15 @@ export default function App() {
 
       try {
         if (paths.length) {
-          await importFiles(library, paths);
+          // PDFs: try to auto-create a bibliographic item from their DOI; any
+          // PDF without a DOI (and all other files) falls back to a plain import.
+          const pdfs = paths.filter((p) => p.toLowerCase().endsWith(".pdf"));
+          const rest = paths.filter((p) => !p.toLowerCase().endsWith(".pdf"));
+          for (const pdf of pdfs) {
+            const created = await retrievePdfMetadata(library, pdf).catch(() => false);
+            if (!created) rest.push(pdf);
+          }
+          if (rest.length) await importFiles(library, rest);
           refresh();
         }
         // The clip server emits `clip-added`, which refreshes the tree for us.
