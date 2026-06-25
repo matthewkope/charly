@@ -13,6 +13,7 @@ import {
 } from "../api";
 import { addRelation, getRelated, removeRelation } from "../relations";
 import Cover from "./Cover";
+import NoteEditor from "./NoteEditor";
 
 function stem(name: string): string {
   const i = name.lastIndexOf(".");
@@ -154,9 +155,10 @@ export default function Inspector({
 
   const removeTag = (t: string) => persistTags(tags.filter((x) => x !== t));
 
-  const persistNote = async () => {
+  const persistNote = async (html: string) => {
+    setNote(html);
     try {
-      await setItemNote(library, entry.path, note);
+      await setItemNote(library, entry.path, html);
       onChanged();
     } catch (e) {
       await confirm(String(e), { title: "Couldn’t save note", kind: "error" });
@@ -330,13 +332,7 @@ export default function Inspector({
 
           <div className="inspector-section inspector-note">
             <div className="inspector-label">Note</div>
-            <textarea
-              className="note-area"
-              placeholder="Write a note about this item…"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              onBlur={persistNote}
-            />
+            <NoteEditor docKey={entry.path} value={note} onChange={persistNote} />
           </div>
         </>
       )}
