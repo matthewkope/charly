@@ -406,13 +406,18 @@ struct FileItem {
     name: String,
     path: String,
     ext: String,
-    title: String,   // alias from meta (frontend falls back to the filename)
-    creator: String, // e.g. a clipped link's site; empty otherwise
+    title: String,   // alias/title (frontend falls back to the filename)
+    creator: String, // a clipped link's site, or a bibliographic item's author
     modified_ms: u64,
     size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cover: Option<String>, // absolute path to a cover image (bibliographic items)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    children: Vec<FileItem>, // attachments shown indented under their item
 }
 
-/// Build one list row (title alias, creator, modified time) for a file path.
+/// Build one list row for a file path, resolving title/creator/cover for
+/// bibliographic items and the saved site for clipped links.
 fn build_file_item(library: &str, idx: &MetaIndex, p: &Path) -> Option<FileItem> {
     let name = p.file_name()?.to_string_lossy().to_string();
     if name.starts_with('.') {
@@ -423,18 +428,39 @@ fn build_file_item(library: &str, idx: &MetaIndex, p: &Path) -> Option<FileItem>
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     let path_s = p.to_string_lossy().to_string();
-    let title = rel_key(library, &path_s)
+    let mut title = rel_key(library, &path_s)
         .and_then(|k| idx.get(&k).map(|m| m.title.clone()))
         .unwrap_or_default();
-    let creator = if ext == "charlylink" {
-        fs::read_to_string(p)
+    let mut creator = String::new();
+    let mut cover = None;
+    if ext == "charlylink" {
+        creator = fs::read_to_string(p)
             .ok()
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
             .and_then(|v| v.get("site").and_then(|x| x.as_str().map(str::to_string)))
-            .unwrap_or_default()
-    } else {
-        String::new()
-    };
+            .unwrap_or_default();
+    } else if ext == "charlyitem" {
+        if let Ok(item) = read_item(&path_s) {
+            if let Some(t) = item.fields.get("title").filter(|t| !t.trim().is_empty()) {
+                title = t.clone();
+            }
+            if let Some(c) = item.creators.first() {
+                creator = if c.first.trim().is_empty() {
+                    c.last.clone()
+                } else {
+                    format!("{}, {}", c.last, c.first)
+                };
+            }
+            if let Some(ci) = item.fields.get("coverImage") {
+                if let Some(parent) = p.parent() {
+                    let cp = parent.join(ci);
+                    if cp.exists() {
+                        cover = Some(cp.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
     let (modified_ms, size) = fs::metadata(p)
         .map(|md| {
             let m = md
@@ -454,19 +480,61 @@ fn build_file_item(library: &str, idx: &MetaIndex, p: &Path) -> Option<FileItem>
         creator,
         modified_ms,
         size,
+        cover,
+        children: Vec::new(),
     })
+}
+
+/// Filenames in `dir` that are attachments of some bibliographic item there —
+/// these are shown nested under their item rather than as top-level rows.
+fn dir_attachment_names(dir: &Path) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    if let Ok(rd) = fs::read_dir(dir) {
+        for e in rd.filter_map(|r| r.ok()) {
+            let p = e.path();
+            if p.extension().map(|x| x == "charlyitem").unwrap_or(false) {
+                if let Ok(item) = read_item(&p.to_string_lossy()) {
+                    for a in item.attachments {
+                        set.insert(a);
+                    }
+                }
+            }
+        }
+    }
+    set
 }
 
 #[tauri::command]
 fn list_items(library: String, folder: String) -> Result<Vec<FileItem>, String> {
     let idx = read_meta_index(&library);
-    let mut items: Vec<FileItem> = fs::read_dir(&folder)
+    let dir = Path::new(&folder);
+    let attach_names = dir_attachment_names(dir);
+    let paths: Vec<PathBuf> = fs::read_dir(&folder)
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .map(|d| d.path())
         .filter(|p| p.is_file())
-        .filter_map(|p| build_file_item(&library, &idx, &p))
         .collect();
+    let mut items: Vec<FileItem> = Vec::new();
+    for p in &paths {
+        let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if attach_names.contains(&name) {
+            continue; // shown as a child of its item instead
+        }
+        let Some(mut fi) = build_file_item(&library, &idx, p) else {
+            continue;
+        };
+        if fi.ext == "charlyitem" {
+            if let Ok(item) = read_item(&fi.path) {
+                for a in &item.attachments {
+                    if let Some(child) = build_file_item(&library, &idx, &dir.join(a)) {
+                        fi.children.push(child);
+                    }
+                }
+            }
+        }
+        items.push(fi);
+    }
     items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(items)
 }
@@ -475,6 +543,7 @@ fn walk_items(library: &str, idx: &MetaIndex, dir: &Path, out: &mut Vec<FileItem
     if out.len() >= 5000 {
         return;
     }
+    let attach_names = dir_attachment_names(dir);
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.filter_map(|r| r.ok()) {
         let p = e.path();
@@ -484,6 +553,9 @@ fn walk_items(library: &str, idx: &MetaIndex, dir: &Path, out: &mut Vec<FileItem
         };
         if name.starts_with('.') {
             continue; // skip .charly and other hidden dirs/files
+        }
+        if attach_names.contains(&name) {
+            continue; // attachment — belongs under its item, not as a top-level row
         }
         if p.is_dir() {
             walk_items(library, idx, &p, out);
@@ -1115,65 +1187,68 @@ struct LinkMeta {
     is_pdf: bool,
     /// A readable HTML snapshot of the page (web pages only), for in-app reading.
     snapshot: Option<String>,
+    /// Byline / published date parsed from the page (for blog-post items).
+    author: Option<String>,
+    published: Option<String>,
 }
 
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+fn ascii_ci_starts(h: &[u8], at: usize, pat: &[u8]) -> bool {
+    h.len() >= at + pat.len() && h[at..at + pat.len()].iter().zip(pat).all(|(a, b)| a.eq_ignore_ascii_case(b))
 }
 
-/// Extract a clean, readable HTML snapshot (headings, paragraphs, lists) from a
-/// page so it can be read offline inside Charly — like Zotero's snapshot.
-fn extract_snapshot(html: &str, title: &str) -> Option<String> {
-    let doc = Html::parse_document(html);
-    let root = ["article", "main", "body"].iter().find_map(|s| {
-        let sel = Selector::parse(s).ok()?;
-        doc.select(&sel).next()
-    })?;
-    let content = Selector::parse("h1, h2, h3, h4, p, li, blockquote, pre").ok()?;
-    let mut out = String::new();
-    if !title.trim().is_empty() {
-        out.push_str(&format!("<h1>{}</h1>\n", html_escape(title)));
+fn ascii_ci_find(h: &[u8], from: usize, pat: &[u8]) -> Option<usize> {
+    if pat.is_empty() || from > h.len() {
+        return None;
     }
-    for el in root.select(&content) {
-        // Skip site chrome (menus, language lists, footers, sidebars).
-        if el.ancestors().any(|a| {
-            a.value()
-                .as_element()
-                .map(|e| matches!(e.name(), "nav" | "header" | "footer" | "aside"))
-                .unwrap_or(false)
-        }) {
-            continue;
+    (from..=h.len().saturating_sub(pat.len())).find(|&i| ascii_ci_starts(h, i, pat))
+}
+
+/// Remove `<tag …>…</tag>` blocks (case-insensitive), e.g. scripts. Byte-level
+/// so it never splits a multi-byte UTF-8 character.
+fn strip_tag_blocks(html: &str, tag: &str) -> String {
+    let h = html.as_bytes();
+    let open = format!("<{tag}").into_bytes();
+    let close = format!("</{tag}>").into_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(h.len());
+    let mut i = 0;
+    while i < h.len() {
+        if ascii_ci_starts(h, i, &open) {
+            match ascii_ci_find(h, i, &close) {
+                Some(end) => {
+                    i = end + close.len();
+                    continue;
+                }
+                None => break, // unterminated — drop the rest
+            }
         }
-        let text: String = el
-            .text()
-            .collect::<String>()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        if text.trim().is_empty() {
-            continue;
-        }
-        let safe = html_escape(&text);
-        let tag = el.value().name();
-        match tag {
-            "h1" | "h2" | "h3" | "h4" => out.push_str(&format!("<h2>{safe}</h2>\n")),
-            "li" => out.push_str(&format!("<li>{safe}</li>\n")),
-            "blockquote" => out.push_str(&format!("<blockquote>{safe}</blockquote>\n")),
-            "pre" => out.push_str(&format!("<pre>{safe}</pre>\n")),
-            _ => out.push_str(&format!("<p>{safe}</p>\n")),
-        }
-        if out.len() > 400_000 {
-            break;
+        out.push(h[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Insert `<base href>` so the saved page's relative images/styles/links resolve
+/// against the original site when the snapshot is viewed inside Charly.
+fn inject_base(html: &str, base: &str) -> String {
+    let tag = format!("<base href=\"{}\">", base.replace('"', "%22"));
+    let h = html.as_bytes();
+    if let Some(idx) = ascii_ci_find(h, 0, b"<head") {
+        if let Some(rel) = html[idx..].find('>') {
+            let pos = idx + rel + 1;
+            return format!("{}{}{}", &html[..pos], tag, &html[pos..]);
         }
     }
-    // Require a little real content, else treat as no usable snapshot.
-    if out.len() < 120 {
-        None
-    } else {
-        Some(out)
+    format!("{tag}{html}")
+}
+
+/// A full-page snapshot: the original HTML with scripts stripped and a `<base>`
+/// injected, stored locally so it renders faithfully in Charly — like Zotero.
+fn full_snapshot(html: &str, base: &str) -> Option<String> {
+    if html.len() > 6_000_000 {
+        return None; // too large to embed sensibly
     }
+    let cleaned = strip_tag_blocks(html, "script");
+    Some(inject_base(&cleaned, base))
 }
 
 fn http_client() -> Result<reqwest::Client, String> {
@@ -1219,6 +1294,15 @@ fn parse_og(html: &str, base: &reqwest::Url) -> LinkMeta {
         .or_else(|| meta("og:image:url", "property"))
         .or_else(|| meta("twitter:image", "name"))
         .and_then(|i| base.join(&i).ok().map(|u| u.to_string()));
+    let author = meta("author", "name")
+        .or_else(|| meta("article:author", "property"))
+        .or_else(|| meta("author", "property"))
+        // Ignore values that are just a URL (some sites put a profile link here).
+        .filter(|a| !a.starts_with("http"));
+    let published = meta("article:published_time", "property")
+        .or_else(|| meta("date", "name"))
+        .or_else(|| meta("datePublished", "itemprop"))
+        .or_else(|| meta("article:published_time", "name"));
     LinkMeta {
         kind: "webpage".into(),
         url: base.as_str().to_string(),
@@ -1228,6 +1312,8 @@ fn parse_og(html: &str, base: &reqwest::Url) -> LinkMeta {
         image,
         is_pdf: false,
         snapshot: None,
+        author,
+        published,
     }
 }
 
@@ -1257,11 +1343,13 @@ async fn fetch_webpage(url: &str) -> Result<LinkMeta, String> {
             image: None,
             is_pdf: true,
             snapshot: None,
+            author: None,
+            published: None,
         });
     }
     let body = resp.text().await.map_err(|e| e.to_string())?;
     let mut meta = parse_og(&body, &final_url);
-    meta.snapshot = extract_snapshot(&body, &meta.title);
+    meta.snapshot = full_snapshot(&body, final_url.as_str());
     Ok(meta)
 }
 
@@ -1294,6 +1382,8 @@ async fn fetch_youtube(url: &str) -> Result<LinkMeta, String> {
         image: o.thumbnail_url,
         is_pdf: false,
         snapshot: None,
+        author: None,
+        published: None,
     })
 }
 
@@ -1329,6 +1419,122 @@ async fn download_pdf(dir: &Path, url: &str, title: &str) -> Result<String, Stri
         n += 1;
     }
     fs::write(&dest, &bytes).map_err(|e| e.to_string())?;
+    Ok(dest.file_name().unwrap().to_string_lossy().to_string())
+}
+
+/// Split a byline ("Last, First" or "First Last") into a creator record.
+fn parse_author(author: &str) -> Creator {
+    let a = author.trim();
+    if let Some((last, first)) = a.split_once(',') {
+        Creator {
+            first: first.trim().to_string(),
+            last: last.trim().to_string(),
+            creator_type: "author".into(),
+        }
+    } else if let Some(idx) = a.rfind(' ') {
+        Creator {
+            first: a[..idx].trim().to_string(),
+            last: a[idx + 1..].trim().to_string(),
+            creator_type: "author".into(),
+        }
+    } else {
+        Creator {
+            first: String::new(),
+            last: a.to_string(),
+            creator_type: "author".into(),
+        }
+    }
+}
+
+/// Download a cover image into the item folder (hidden); returns its filename.
+async fn download_cover(dir: &Path, base: &str, image_url: &str) -> Result<String, String> {
+    let c = http_client()?;
+    let resp = c.get(image_url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("cover fetch failed: {}", resp.status()));
+    }
+    let ctype = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+    let lower = image_url.to_lowercase();
+    let ext = if ctype.contains("png") || lower.contains(".png") {
+        "png"
+    } else if ctype.contains("webp") || lower.contains(".webp") {
+        "webp"
+    } else if ctype.contains("gif") || lower.contains(".gif") {
+        "gif"
+    } else {
+        "jpg"
+    };
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    let fname = format!("{base}.{ext}");
+    fs::write(dir.join(&fname), &bytes).map_err(|e| e.to_string())?;
+    Ok(fname)
+}
+
+/// Clip a web page as a Zotero-style Blog Post item: auto-filled metadata, a
+/// cover, and a child "Snapshot" attachment (the saved page).
+async fn clip_webpage_as_item(dir: &Path, meta: &LinkMeta) -> Result<String, String> {
+    let mut base = sanitize(&meta.title);
+    if base.is_empty() {
+        base = "Web Page".into();
+    }
+    if base.chars().count() > 100 {
+        base = base.chars().take(100).collect();
+    }
+    let mut dest = dir.join(format!("{base}.charlyitem"));
+    let mut n = 2;
+    while dest.exists() {
+        dest = dir.join(format!("{base} ({n}).charlyitem"));
+        n += 1;
+    }
+    let stem = dest
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| base.clone());
+
+    let mut fields: std::collections::BTreeMap<String, String> = Default::default();
+    fields.insert("title".into(), meta.title.clone());
+    if let Some(s) = &meta.site {
+        fields.insert("blogTitle".into(), s.clone());
+    }
+    fields.insert("url".into(), meta.url.clone());
+    if let Some(d) = &meta.description {
+        fields.insert("abstractNote".into(), d.clone());
+    }
+    if let Some(p) = &meta.published {
+        fields.insert("date".into(), p.clone());
+    }
+
+    let creators = match &meta.author {
+        Some(a) if !a.trim().is_empty() => vec![parse_author(a)],
+        _ => vec![],
+    };
+
+    let mut attachments: Vec<String> = Vec::new();
+    if let Some(html) = &meta.snapshot {
+        let snap_name = format!("{stem} - Snapshot.html");
+        fs::write(dir.join(&snap_name), html).map_err(|e| e.to_string())?;
+        attachments.push(snap_name);
+    }
+    if let Some(img) = &meta.image {
+        if let Ok(name) = download_cover(dir, &format!(".{stem}.cover"), img).await {
+            fields.insert("coverImage".into(), name);
+        }
+    }
+
+    let item = Item {
+        item_type: "blogPost".into(),
+        fields,
+        creators,
+        attachments,
+        date_added: now_secs(),
+        date_modified: now_secs(),
+    };
+    write_item(&dest, &item)?;
     Ok(dest.file_name().unwrap().to_string_lossy().to_string())
 }
 
@@ -1395,6 +1601,20 @@ fn save_link_file(dir: &Path, meta: &LinkMeta) -> Result<String, String> {
         dest = dir.join(format!("{base} ({n}).charlylink"));
         n += 1;
     }
+    // Write the full-page snapshot to a hidden sibling so it doesn't clutter the
+    // folder, and reference it by filename (keeps the .charlylink small).
+    let stem = dest
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| base.clone());
+    let snapshot_field = match &meta.snapshot {
+        Some(html) => {
+            let snap_name = format!(".{stem}.snapshot.html");
+            fs::write(dir.join(&snap_name), html).map_err(|e| e.to_string())?;
+            Some(snap_name)
+        }
+        None => None,
+    };
     let body = serde_json::json!({
         "url": meta.url,
         "title": meta.title,
@@ -1402,7 +1622,7 @@ fn save_link_file(dir: &Path, meta: &LinkMeta) -> Result<String, String> {
         "description": meta.description,
         "kind": meta.kind,
         "image": meta.image,
-        "snapshot": meta.snapshot,
+        "snapshot": snapshot_field, // filename of the saved snapshot, or null
     });
     fs::write(&dest, serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
@@ -1427,7 +1647,11 @@ async fn clip_to_folder(
     }
     let (kind, file) = if meta.is_pdf {
         ("pdf".to_string(), download_pdf(&dir, url, &meta.title).await?)
+    } else if meta.kind == "webpage" {
+        // Web pages become Blog Post items with a child Snapshot, like Zotero.
+        ("blogPost".to_string(), clip_webpage_as_item(&dir, &meta).await?)
     } else {
+        // YouTube and other links stay simple `.charlylink` records.
         (meta.kind.clone(), save_link_file(&dir, &meta)?)
     };
     let rel = folder.clone().unwrap_or_else(|| "Inbox".into());
@@ -1616,6 +1840,8 @@ fn save_feed_item(
         image: None,
         is_pdf: false,
         snapshot: None,
+        author: None,
+        published: None,
     };
     save_link_file(&dir, &meta)
 }

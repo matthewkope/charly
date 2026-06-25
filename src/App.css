@@ -558,6 +558,26 @@ button.ghost {
 .item-icon {
   flex-shrink: 0;
 }
+.title-inner {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+}
+.item-twisty {
+  flex-shrink: 0;
+  width: 13px;
+  font-size: 9px;
+  color: var(--muted);
+  display: inline-flex;
+  justify-content: center;
+  cursor: pointer;
+}
+.item-twisty-leaf {
+  cursor: default;
+}
 .col-resize {
   position: absolute;
   top: 0;
@@ -774,48 +794,11 @@ button.ghost {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.snapshot-body {
+.snapshot-frame {
   flex: 1;
-  overflow-y: auto;
-  background: #fff;
-  display: flex;
-  justify-content: center;
-}
-.snapshot-article {
-  max-width: 680px;
   width: 100%;
-  padding: 28px 32px 64px;
-  font-size: 16px;
-  line-height: 1.65;
-  color: #1a1a1c;
-}
-.snapshot-article h1 {
-  font-size: 26px;
-  line-height: 1.25;
-  margin: 0 0 18px;
-}
-.snapshot-article h2 {
-  font-size: 19px;
-  margin: 28px 0 8px;
-}
-.snapshot-article p {
-  margin: 0 0 14px;
-}
-.snapshot-article li {
-  margin: 0 0 6px 22px;
-}
-.snapshot-article blockquote {
-  margin: 0 0 14px;
-  padding-left: 14px;
-  border-left: 3px solid var(--border);
-  color: var(--muted);
-}
-.snapshot-article pre {
-  background: #f5f5f7;
-  padding: 12px 14px;
-  border-radius: 8px;
-  overflow-x: auto;
-  font-size: 13px;
+  border: 0;
+  background: #fff;
 }
 
 /* ---- Document reader nav pane (contents / pages / highlights) ---- */

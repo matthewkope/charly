@@ -43,6 +43,7 @@ import TrashView from "./components/TrashView";
 import FeedView from "./components/FeedView";
 import SavedSearchModal from "./components/SavedSearchModal";
 import SnapshotViewer from "./components/SnapshotViewer";
+import HtmlViewer from "./components/HtmlViewer";
 import PromptModal, { PromptState } from "./components/PromptModal";
 import { ALL_TYPES, COMMON_TYPES } from "./itemTypes";
 import { retrievePdfMetadata } from "./pdfMeta";
@@ -216,10 +217,22 @@ export default function App() {
     if (entry.is_dir) return;
     setInspected(entry);
     setInspectorOpen(true);
-    if (isSupported(entry.ext) || entry.ext === "charlyitem") {
+    if (
+      isSupported(entry.ext) ||
+      entry.ext === "charlyitem" ||
+      entry.ext === "html" ||
+      entry.ext === "htm"
+    ) {
       setTabs((prev) => (prev.some((t) => t.path === entry.path) ? prev : [...prev, entry]));
       setActivePath(entry.path);
     }
+  };
+
+  // Single click in the tree / item list: just select + inspect (no tab).
+  // Opening into a tab requires a double-click (see activateEntry).
+  const selectItem = (entry: Entry) => {
+    setInspected(entry);
+    setInspectorOpen(true);
   };
 
   // Select a folder in the tree → show its contents in the home item list.
@@ -827,7 +840,7 @@ export default function App() {
                 version={version}
                 selectedPath={inspected?.path ?? activePath}
                 selectedFolder={currentFolder ?? library}
-                onSelect={openEntry}
+                onSelect={selectItem}
                 onSelectFolder={selectFolder}
                 onActivate={activateEntry}
                 onContext={(entry, x, y) => setMenu({ entry, x, y })}
@@ -967,7 +980,7 @@ export default function App() {
                         ? "Nothing here yet."
                         : "This folder has no documents yet."
                   }
-                  onSelect={openEntry}
+                  onSelect={selectItem}
                   onOpen={activateEntry}
                   onContext={(entry, x, y) => setMenu({ entry, x, y })}
                 />
@@ -984,6 +997,8 @@ export default function App() {
                     <ItemEditor path={t.path} library={library} onOpenPath={openPath} />
                   ) : t.ext === "charlylink" ? (
                     <SnapshotViewer path={t.path} />
+                  ) : t.ext === "html" || t.ext === "htm" ? (
+                    <HtmlViewer path={t.path} />
                   ) : (
                     <EpubViewer path={t.path} />
                   )}
@@ -1091,6 +1106,14 @@ function ContextMenu({
         <>
           <button onClick={() => onImport(entry.path)}>Import into folder…</button>
           <button onClick={() => onNewFolder(entry.path)}>New subfolder…</button>
+          <div className="menu-sep" />
+        </>
+      )}
+      {entry.ext === "charlylink" && (
+        <>
+          <button onClick={() => openCharlyLink(entry.path).catch(() => {})}>
+            View online ↗
+          </button>
           <div className="menu-sep" />
         </>
       )}

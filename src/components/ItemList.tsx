@@ -1,13 +1,40 @@
-import { useEffect, useMemo, useState } from "react";
-import { Entry, FileItem, listItems } from "../api";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { Entry, FileItem, listItems, readFileBytes } from "../api";
 import CoverThumb from "./CoverThumb";
 
 function icon(ext: string): string {
   if (ext === "pdf") return "📕";
   if (ext === "epub") return "📗";
   if (ext === "charlylink") return "🔗";
-  if (ext === "charlyitem") return "📄";
+  if (ext === "charlyitem") return "📝";
   return "📄";
+}
+
+function rowIcon(it: FileItem, isChild: boolean): string {
+  if (isChild && (it.ext === "html" || it.ext === "htm")) return "🖼";
+  return icon(it.ext);
+}
+
+// A small cover thumbnail loaded from a local image file (bibliographic items).
+function ImageThumb({ path }: { path: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    let url: string | null = null;
+    readFileBytes(path)
+      .then((b) => {
+        if (!alive) return;
+        url = URL.createObjectURL(new Blob([b as BlobPart]));
+        setSrc(url);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [path]);
+  if (!src) return <span className="item-icon">📝</span>;
+  return <img className="item-cover" src={src} alt="" />;
 }
 
 function typeLabel(ext: string): string {
@@ -125,6 +152,13 @@ export default function ItemList({
     loadJSON(SORT_KEY, { key: "title", dir: 1 }),
   );
   const [picker, setPicker] = useState<{ x: number; y: number } | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpand = (path: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(path) ? next.delete(path) : next.add(path);
+      return next;
+    });
 
   useEffect(() => localStorage.setItem(VIS_KEY, JSON.stringify(visible)), [visible]);
   useEffect(() => localStorage.setItem(WIDTH_KEY, JSON.stringify(widths)), [widths]);
@@ -195,6 +229,67 @@ export default function ItemList({
     el.addEventListener("pointerup", onUp);
   };
 
+  // Render an item row and (if expanded) its nested attachment children.
+  const renderRow = (it: FileItem, depth: number) => {
+    const kids = it.children ?? [];
+    const hasKids = kids.length > 0;
+    const open = expanded.has(it.path);
+    const isChild = depth > 0;
+    const displayTitle =
+      isChild && (it.ext === "html" || it.ext === "htm") ? "Snapshot" : it.title || it.name;
+    return (
+      <Fragment key={it.path}>
+        <div
+          className={`item-row${selectedPath === it.path ? " selected" : ""}`}
+          onClick={() => (isChild ? onOpen(asEntry(it)) : onSelect(asEntry(it)))}
+          onDoubleClick={() => onOpen(asEntry(it))}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            onContext(asEntry(it), e.clientX, e.clientY);
+          }}
+          title={it.ext === "charlylink" ? "Double-click to open in browser" : "Double-click to open"}
+        >
+          {shownCols.map((c) => (
+            <span
+              key={c.key}
+              className={`col-cell col-${c.key}${c.numeric ? " num" : ""}`}
+              style={c.fixed ? { flex: 1, minWidth: 120 } : { width: widthOf(c) }}
+            >
+              {c.key === "title" ? (
+                <span className="title-inner" style={{ paddingLeft: depth * 16 }}>
+                  {hasKids ? (
+                    <span
+                      className="item-twisty"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleExpand(it.path);
+                      }}
+                    >
+                      {open ? "▾" : "▸"}
+                    </span>
+                  ) : (
+                    <span className="item-twisty item-twisty-leaf" />
+                  )}
+                  {it.cover ? (
+                    <ImageThumb path={it.cover} />
+                  ) : it.ext === "pdf" ? (
+                    <CoverThumb path={it.path} fallback={icon(it.ext)} />
+                  ) : (
+                    <span className="item-icon">{rowIcon(it, isChild)}</span>
+                  )}
+                  <span className="item-title-text">{displayTitle}</span>
+                </span>
+              ) : (
+                <span className="cell-text">{c.text(it)}</span>
+              )}
+            </span>
+          ))}
+        </div>
+        {hasKids && open && kids.map((ch) => renderRow(ch, depth + 1))}
+      </Fragment>
+    );
+  };
+
   return (
     <div className="itemlist">
       <div
@@ -232,40 +327,7 @@ export default function ItemList({
         {isLoaded && items.length === 0 ? (
           <div className="itemlist-empty">{emptyText}</div>
         ) : (
-          items.map((it) => (
-            <div
-              key={it.path}
-              className={`item-row${selectedPath === it.path ? " selected" : ""}`}
-              onClick={() => onSelect(asEntry(it))}
-              onDoubleClick={() => onOpen(asEntry(it))}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                onContext(asEntry(it), e.clientX, e.clientY);
-              }}
-              title={it.ext === "charlylink" ? "Double-click to open in browser" : "Double-click to open"}
-            >
-              {shownCols.map((c) => (
-                <span
-                  key={c.key}
-                  className={`col-cell col-${c.key}${c.numeric ? " num" : ""}`}
-                  style={c.fixed ? { flex: 1, minWidth: 120 } : { width: widthOf(c) }}
-                >
-                  {c.key === "title" ? (
-                    <>
-                      {it.ext === "pdf" ? (
-                        <CoverThumb path={it.path} fallback={icon(it.ext)} />
-                      ) : (
-                        <span className="item-icon">{icon(it.ext)}</span>
-                      )}
-                      <span className="item-title-text">{c.text(it)}</span>
-                    </>
-                  ) : (
-                    <span className="cell-text">{c.text(it)}</span>
-                  )}
-                </span>
-              ))}
-            </div>
-          ))
+          items.map((it) => renderRow(it, 0))
         )}
       </div>
 

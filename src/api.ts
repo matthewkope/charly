@@ -86,10 +86,12 @@ export interface FileItem {
   name: string;
   path: string;
   ext: string;
-  title: string; // alias; empty → fall back to filename
+  title: string; // alias/title; empty → fall back to filename
   creator: string;
   modified_ms: number;
   size: number;
+  cover?: string; // absolute path to a cover image (bibliographic items)
+  children?: FileItem[]; // attachments shown nested under the item
 }
 
 export const listItems = (library: string, folder: string) =>

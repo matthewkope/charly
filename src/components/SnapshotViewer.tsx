@@ -1,23 +1,43 @@
 import { useEffect, useState } from "react";
-import { CharlyLink, openCharlyLink, readCharlyLink } from "../api";
+import { CharlyLink, openCharlyLink, readCharlyLink, readFileBytes } from "../api";
 
-// Reads a clipped web page's saved snapshot and shows it in Charly's reader,
-// like Zotero's Snapshot attachment. "Open original" opens the live page.
+function dirOf(path: string): string {
+  return path.slice(0, Math.max(0, path.lastIndexOf("/")));
+}
+
+// Renders a clipped web page's locally-saved snapshot inside Charly — like
+// Zotero's Snapshot. The full page HTML is shown in a sandboxed iframe (no
+// scripts), with images/styles resolving against the original site.
 export default function SnapshotViewer({ path }: { path: string }) {
   const [data, setData] = useState<CharlyLink | null>(null);
+  const [html, setHtml] = useState<string | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "none">("loading");
 
   useEffect(() => {
+    let cancelled = false;
     setStatus("loading");
-    readCharlyLink(path)
-      .then((d) => {
+    setHtml(null);
+    (async () => {
+      try {
+        const d = await readCharlyLink(path);
+        if (cancelled) return;
         setData(d);
-        setStatus(d.snapshot ? "ready" : "none");
-      })
-      .catch(() => setStatus("none"));
+        if (d.snapshot) {
+          const bytes = await readFileBytes(`${dirOf(path)}/${d.snapshot}`);
+          if (cancelled) return;
+          setHtml(new TextDecoder().decode(bytes));
+          setStatus("ready");
+        } else {
+          setStatus("none");
+        }
+      } catch {
+        if (!cancelled) setStatus("none");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [path]);
-
-  if (status === "loading") return <div className="viewer-msg">Loading snapshot…</div>;
 
   return (
     <div className="viewer snapshot-viewer">
@@ -25,16 +45,17 @@ export default function SnapshotViewer({ path }: { path: string }) {
         <span className="snapshot-site">{data?.site || data?.url || ""}</span>
         <button onClick={() => openCharlyLink(path).catch(() => {})}>Open original ↗</button>
       </div>
-      {status === "ready" && data?.snapshot ? (
-        <div className="snapshot-body">
-          <article
-            className="snapshot-article"
-            // Snapshot HTML is built from escaped text + a fixed tag whitelist
-            // in the backend (extract_snapshot), so it carries no scripts.
-            dangerouslySetInnerHTML={{ __html: data.snapshot }}
-          />
-        </div>
-      ) : (
+      {status === "loading" && <div className="viewer-msg">Loading snapshot…</div>}
+      {status === "ready" && html ? (
+        <iframe
+          className="snapshot-frame"
+          // Sandboxed with no allow-scripts: the page's own JS can't run, but
+          // images and stylesheets still load. Safe to show clipped content.
+          sandbox=""
+          srcDoc={html}
+          title={data?.title || "Snapshot"}
+        />
+      ) : status === "none" ? (
         <div className="empty">
           <div className="empty-art">🔗</div>
           <p>
@@ -43,7 +64,7 @@ export default function SnapshotViewer({ path }: { path: string }) {
             Use “Open original” to view it in your browser.
           </p>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
