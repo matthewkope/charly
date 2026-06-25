@@ -151,13 +151,22 @@ export default function ItemList({
 
   const items = useMemo(() => {
     const col = COLUMNS.find((c) => c.key === sort.key) ?? COLUMNS[0];
+    const titleCol = COLUMNS[0]; // Title — the secondary tie-breaker
+    const compare = (c: ColumnDef, a: FileItem, b: FileItem) => {
+      const av = c.sortVal(a);
+      const bv = c.sortVal(b);
+      if (typeof av === "number" && typeof bv === "number") return av - bv;
+      return String(av).localeCompare(String(bv));
+    };
     return [...raw].sort((a, b) => {
-      const av = col.sortVal(a);
-      const bv = col.sortVal(b);
-      let cmp: number;
-      if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
-      else cmp = String(av).localeCompare(String(bv));
-      return cmp * sort.dir;
+      const primary = compare(col, a, b);
+      if (primary !== 0) return primary * sort.dir;
+      // Tie-break by Title, then path — always ascending, for stable ordering.
+      if (col.key !== "title") {
+        const t = compare(titleCol, a, b);
+        if (t !== 0) return t;
+      }
+      return a.path.localeCompare(b.path);
     });
   }, [raw, sort]);
 
