@@ -29,5 +29,7 @@ url = "2.5.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip", "stream"] }
 # Tiny localhost HTTP server that the Charly browser extension posts clips to.
 tiny_http = "0.12"
+# RSS/Atom feed parsing for the Feeds view.
+feed-rs = "2"
 tokio = { version = "1", features = ["rt", "net", "time"] }
 
