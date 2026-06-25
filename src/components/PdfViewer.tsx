@@ -25,6 +25,8 @@ export default function PdfViewer({
   onHighlightsChange,
   targetPage,
   targetNonce,
+  navOpen,
+  onToggleNav,
 }: {
   path: string;
   library?: string | null;
@@ -35,6 +37,9 @@ export default function PdfViewer({
   /** Scroll the document to this 1-based page; bump `targetNonce` to re-trigger. */
   targetPage?: number | null;
   targetNonce?: number;
+  /** Left notes pane open state + toggle (rendered as a toolbar icon). */
+  navOpen?: boolean;
+  onToggleNav?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const pagesRef = useRef<PageRef[]>([]);
@@ -324,6 +329,31 @@ export default function PdfViewer({
   return (
     <div className="viewer">
       <div className="viewer-toolbar">
+        {onToggleNav && (
+          <>
+            <button
+              className="icon-btn"
+              onClick={onToggleNav}
+              title={navOpen ? "Hide notes pane" : "Show notes pane"}
+              aria-label="Toggle notes pane"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <line x1="9" y1="4" x2="9" y2="20" />
+              </svg>
+            </button>
+            <span className="tool-sep" />
+          </>
+        )}
         <button onClick={() => setScale((s) => Math.max(0.5, +(s - 0.2).toFixed(2)))}>−</button>
         <span className="zoom-label">{Math.round(scale * 100)}%</span>
         <button onClick={() => setScale((s) => Math.min(3, +(s + 0.2).toFixed(2)))}>+</button>

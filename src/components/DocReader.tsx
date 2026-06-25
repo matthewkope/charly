@@ -41,14 +41,6 @@ export default function DocReader({
           notesOnly
         />
       )}
-      <button
-        className="docnav-toggle"
-        onClick={() => setNavOpen((o) => !o)}
-        title={navOpen ? "Hide notes pane" : "Show notes pane"}
-        aria-label={navOpen ? "Hide notes" : "Show notes"}
-      >
-        {navOpen ? "‹" : "›"}
-      </button>
       <PdfViewer
         path={path}
         library={library}
@@ -56,6 +48,8 @@ export default function DocReader({
         onHighlightsChange={setHighlights}
         targetPage={nav?.page ?? null}
         targetNonce={nav?.nonce ?? 0}
+        navOpen={navOpen}
+        onToggleNav={() => setNavOpen((o) => !o)}
       />
     </div>
   );
