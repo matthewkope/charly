@@ -397,26 +397,6 @@ export default function App() {
     }
   };
 
-  // "+" tab: pick PDFs/EPUBs from anywhere and open them in new tabs.
-  const openNewTab = async () => {
-    const files = await pickDocuments();
-    if (files.length === 0) return;
-    const opened: Entry[] = files.map((p) => ({
-      name: p.split("/").pop() ?? p,
-      path: p,
-      is_dir: false,
-      ext: (p.split(".").pop() ?? "").toLowerCase(),
-    }));
-    setTabs((prev) => {
-      const merged = [...prev];
-      for (const e of opened) if (!merged.some((t) => t.path === e.path)) merged.push(e);
-      return merged;
-    });
-    const last = opened[opened.length - 1];
-    setActivePath(last.path);
-    setInspected(last);
-  };
-
   const doImport = async (targetDir: string) => {
     const files = await pickDocuments();
     if (files.length === 0) return;
@@ -641,7 +621,7 @@ export default function App() {
               }}
               title={t.path}
             >
-              <span className="tab-icon">{t.ext === "epub" ? "📗" : "📕"}</span>
+              <span className="tab-icon">{fileIcon(t.ext)}</span>
               <span className="tab-label">{t.name}</span>
               <button
                 className="tab-close"
@@ -655,9 +635,6 @@ export default function App() {
               </button>
             </div>
           ))}
-          <button className="tab-new" title="Open a document in a new tab" onClick={openNewTab}>
-            +
-          </button>
         </div>
       </header>
 
